@@ -14,7 +14,21 @@ import torch.nn.functional as F
 
 class LUTkLayer(nn.Module):
     """Layer of k-input LUT nodes. Inputs selected Top-K-style (learnable
-    softmax over k random candidates per input slot) or fixed-random."""
+    softmax over k random candidates per input slot) or fixed-random.
+
+    Args:
+        in_dim (int): Number of input features.
+        out_dim (int): Number of LUT nodes (one FPGA LUT_k each).
+        k (int): Inputs per LUT node; the node stores ``2**k`` learnable
+            entries = one FPGA LUT_k. Default ``4``.
+        learn_conn (bool): If ``True`` (default) each of the ``k`` input slots
+            selects its wire via a learnable softmax over its candidates; if
+            ``False`` the selection is fixed to the first candidate wire.
+        cand_k (int): Number of candidate wires each of the ``k`` input slots
+            chooses among (clamped to ``in_dim``). Default ``4``.
+        seed (int | None): RNG seed for the fixed random candidate wiring;
+            ``None`` (default) uses the global RNG (non-deterministic wiring).
+    """
 
     def __init__(self, in_dim, out_dim, k=4, learn_conn=True, cand_k=4,
                  seed=None):
@@ -77,7 +91,23 @@ class LUTkLayer(nn.Module):
 
 
 class LUTkNet(nn.Module):
-    """Stack of LUTk layers + GroupSum head (for capacity comparison)."""
+    """Stack of LUTk layers + GroupSum head (for capacity comparison).
+
+    Args:
+        in_dim (int): Number of input features to the first layer.
+        width (int): Number of LUT nodes per layer (output width of every
+            layer after the first).
+        depth (int): Number of stacked :class:`LUTkLayer` layers.
+        k (int): Inputs per LUT node; each node stores ``2**k`` entries.
+            Default ``4``.
+        num_classes (int): Number of output classes for the GroupSum head.
+            Default ``10``.
+        tau (float): GroupSum temperature. Default ``4.0``.
+        cand_k (int): Candidate wires per input slot, passed to each layer.
+            Default ``4``.
+        seed (int): Base RNG seed; layer ``i`` is seeded with
+            ``seed * 1000 + i`` for distinct wiring. Default ``0``.
+    """
 
     def __init__(self, in_dim, width, depth, k=4, num_classes=10, tau=4.0,
                  cand_k=4, seed=0):

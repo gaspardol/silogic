@@ -34,6 +34,21 @@ def _gumbel(shape, device):
 
 
 class WARPLayer(nn.Module):
+    """2-input WARP node: 4 Walsh-Hadamard coeffs per node with sigmoid relaxation.
+
+    Args:
+        in_dim (int): Number of input features.
+        out_dim (int): Number of nodes (outputs).
+        k (int): Number of Top-K candidate inputs per node (per operand, for
+            each of the two inputs); clamped to ``in_dim``. Default ``8``.
+        tau (float): Sigmoid temperature in ``f = sigmoid(z / tau)``; smaller is
+            sharper, the ``tau -> 0`` limit gives an exact 2-LUT. Default ``1.0``.
+        residual_p (float): Residual-init pass-through probability in ``[0, 1)``;
+            biases each node toward passing through its 2nd input.
+            ``0.0`` disables residual init (theta randomly initialized). Default ``0.0``.
+        seed (int, optional): RNG seed for candidate/connectome/theta init;
+            ``None`` uses the global default RNG. Default ``None``.
+    """
     def __init__(self, in_dim, out_dim, k=8, tau=1.0, residual_p=0.0, seed=None):
         super().__init__()
         self.in_dim = in_dim; self.out_dim = out_dim; self.tau = tau
@@ -95,6 +110,22 @@ class WARPLayer(nn.Module):
 
 
 class WARPNet(nn.Module):
+    """Stack of :class:`WARPLayer` blocks with a :class:`GroupSum` classification head.
+
+    Args:
+        in_dim (int): Number of input features.
+        width (int): Nodes per hidden layer; must be divisible by ``num_classes``
+            for the GroupSum head.
+        depth (int): Number of stacked :class:`WARPLayer` blocks.
+        num_classes (int): Number of output classes (GroupSum groups). Default ``10``.
+        k (int): Number of Top-K candidate inputs per node; clamped to layer
+            ``in_dim``. Default ``8``.
+        tau (float): Sigmoid temperature in ``f = sigmoid(z / tau)``; smaller is
+            sharper. Default ``1.0``.
+        residual_p (float): Residual-init pass-through probability in ``[0, 1)``;
+            ``0.0`` disables residual init. Default ``0.0``.
+        seed (int): Base RNG seed; layer ``i`` uses ``seed * 100 + i``. Default ``0``.
+    """
     def __init__(self, in_dim, width, depth, num_classes=10, k=8, tau=1.0,
                  residual_p=0.0, seed=0):
         super().__init__()
@@ -123,7 +154,23 @@ class WARPNet(nn.Module):
 class WARPLayerN(nn.Module):
     """Arity-n WARP node: theta in R^(2^n), z = sum_i theta_i * prod_{k in i} u_k,
     u_k = 2*x_k-1 (Walsh monomials), out = sigmoid(z/tau). n inputs selected
-    Top-K-style. PyTorch (no custom kernel for n>2 yet)."""
+    Top-K-style. PyTorch (no custom kernel for n>2 yet).
+
+    Args:
+        in_dim (int): Number of input features.
+        out_dim (int): Number of nodes (outputs).
+        arity (int): Inputs per node; the node has ``2**arity`` Walsh
+            coefficients (a full n-input LUT). Default ``6``.
+        k (int): Number of Top-K candidate inputs per node (per operand);
+            clamped to ``in_dim``. Default ``8``.
+        tau (float): Sigmoid temperature in ``f = sigmoid(z / tau)``; smaller is
+            sharper. Default ``1.0``.
+        residual_p (float): Residual-init pass-through probability in ``[0, 1)``;
+            biases each node toward passing through its last input.
+            ``0.0`` disables residual init (theta randomly initialized). Default ``0.0``.
+        seed (int, optional): RNG seed for candidate/connectome/theta init;
+            ``None`` uses the global default RNG. Default ``None``.
+    """
     def __init__(self, in_dim, out_dim, arity=6, k=8, tau=1.0, residual_p=0.0, seed=None):
         super().__init__()
         self.in_dim = in_dim; self.out_dim = out_dim; self.n = arity; self.tau = tau
@@ -167,6 +214,24 @@ class WARPLayerN(nn.Module):
 
 
 class WARPNetN(nn.Module):
+    """Stack of arity-``n`` :class:`WARPLayerN` blocks with a :class:`GroupSum` head.
+
+    Args:
+        in_dim (int): Number of input features.
+        width (int): Nodes per hidden layer; must be divisible by ``num_classes``
+            for the GroupSum head.
+        depth (int): Number of stacked :class:`WARPLayerN` blocks.
+        arity (int): Inputs per node; each node has ``2**arity`` Walsh
+            coefficients (a full n-input LUT). Default ``6``.
+        num_classes (int): Number of output classes (GroupSum groups). Default ``10``.
+        k (int): Number of Top-K candidate inputs per node; clamped to layer
+            ``in_dim``. Default ``8``.
+        tau (float): Sigmoid temperature in ``f = sigmoid(z / tau)``; smaller is
+            sharper. Default ``1.0``.
+        residual_p (float): Residual-init pass-through probability in ``[0, 1)``;
+            ``0.0`` disables residual init. Default ``0.0``.
+        seed (int): Base RNG seed; layer ``i`` uses ``seed * 100 + i``. Default ``0``.
+    """
     def __init__(self, in_dim, width, depth, arity=6, num_classes=10, k=8, tau=1.0,
                  residual_p=0.0, seed=0):
         super().__init__()

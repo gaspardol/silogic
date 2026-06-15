@@ -28,6 +28,39 @@ GATE_A = 3  # index of the 'A' (pass-through) gate in BASIS_COEFFS ordering
 
 
 class ConvLogicTree(nn.Module):
+    """Logic-gate-tree convolution layer (Petersen-style trees, LILogic wiring).
+
+    Each output channel is a complete binary tree of depth ``tree_depth`` with
+    ``2**tree_depth`` leaves drawn from the receptive field and
+    ``2**tree_depth - 1`` learnable gates, shared across all spatial placements.
+
+    Args:
+        in_channels (int): Number of input channels ``C``.
+        out_channels (int): Number of output channels ``n`` (one tree each).
+        kernel (int): Square kernel side length (``kernel x kernel`` receptive
+            field). Default ``3``.
+        tree_depth (int): Depth ``d`` of each gate tree; gives ``2**d`` leaves
+            and ``2**d - 1`` gates. Default ``2``.
+        stride (int): Convolution stride. Default ``1``.
+        padding (int): Zero-padding on each side. Default ``1``.
+        connect (str): Leaf wiring mode. ``"topk"`` (default) uses learnable
+            Top-K connectivity (softmax over ``k`` candidates per leaf);
+            ``"fixed"`` uses one fixed random leaf index per position (Petersen
+            baseline) and enables the Triton ``tree_conv`` kernel on CUDA.
+        k (int): Top-K candidate pool size per leaf when ``connect="topk"``
+            (clamped to the per-tree pool ``n_chan * kernel * kernel``).
+            Unused for ``"fixed"``. Default ``4``.
+        n_chan (int): Number of distinct input channels each tree may observe;
+            leaves are drawn only from these channels' receptive-field positions
+            (paper uses ``2``). Default ``2``.
+        residual_init (bool): If ``True`` (default), bias every gate toward the
+            ``"A"`` pass-through gate (~90%) for residual initialization; else
+            initialize gate logits with small Gaussian noise.
+        seed (int): RNG seed for the random channel/leaf selection. Default ``0``.
+        residual (bool): If ``True``, add a fixed structural skip at each tree
+            node, ``out = XOR(gate(a, b), a)``; disables the Triton kernel.
+            Default ``False``.
+    """
     def __init__(self, in_channels, out_channels, kernel=3, tree_depth=2,
                  stride=1, padding=1, connect="topk", k=4, n_chan=2,
                  residual_init=True, seed=0, residual=False):
@@ -188,7 +221,11 @@ class ConvLogicTree(nn.Module):
 
 
 class OrPool(nn.Module):
-    """Logical OR pooling = max t-conorm = spatial max-pool."""
+    """Logical OR pooling = max t-conorm = spatial max-pool.
+
+    Args:
+        size (int): Pooling window and stride. Default ``2`` (halves H and W).
+    """
     def __init__(self, size=2):
         super().__init__()
         self.size = size

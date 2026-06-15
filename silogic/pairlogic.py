@@ -37,6 +37,24 @@ from .model import (BASIS_COEFFS, TRUTH_TABLES, ternary_ste, ste_threshold,
 
 
 class PairLogicLayer(nn.Module):
+    """Attention-like pairwise-logic layer (optionally multi-head).
+
+    Each output soft-selects a query input and combines it with every input
+    through a learnable 2-input logic gate, weighted by a ternary attention
+    pattern and thresholded (see the module docstring for the math).
+
+    Args:
+        in_dim (int): Number of input features.
+        out_dim (int): Number of output features.
+        n_heads (int): Number of independent ``(query, gate, attention-pattern)``
+            heads per output, summed before the threshold; ``>1`` restores
+            per-key gate diversity. Default ``1``.
+        cand_q (int): Number of candidate inputs each output's query is selected
+            from (clamped to ``in_dim``). Default ``8``.
+        seed (int | None): RNG seed for the fixed random query-candidate wiring;
+            ``None`` (default) uses the global RNG (non-deterministic wiring).
+    """
+
     def __init__(self, in_dim, out_dim, n_heads=1, cand_q=8, seed=None):
         super().__init__()
         self.in_dim = in_dim
@@ -106,7 +124,22 @@ class PairLogicLayer(nn.Module):
 
 
 class PairLogicNet(nn.Module):
-    """Stack of attention-like pairwise-logic layers + GroupSum head."""
+    """Stack of attention-like pairwise-logic layers + GroupSum head.
+
+    Args:
+        in_dim (int): Number of input features to the first layer.
+        width (int): Output width of every layer; must be divisible by
+            ``num_classes``.
+        depth (int): Number of stacked :class:`PairLogicLayer` layers.
+        num_classes (int): Number of output classes for the GroupSum head.
+            Default ``10``.
+        tau (float): GroupSum temperature. Default ``10.0``.
+        n_heads (int): Heads per output, passed to each layer. Default ``1``.
+        cand_q (int): Query candidates per output, passed to each layer.
+            Default ``8``.
+        seed (int): Base RNG seed; layer ``i`` is seeded with
+            ``seed * 1000 + i`` for distinct wiring. Default ``0``.
+    """
 
     def __init__(self, in_dim, width, depth, num_classes=10, tau=10.0,
                  n_heads=1, cand_q=8, seed=0):

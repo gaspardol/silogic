@@ -25,6 +25,48 @@ def _binarize_ste(x):
 
 
 class LogicTreeNet(nn.Module):
+    """Convolutional logic-gate-tree network with a logic head.
+
+    Stacks ``ConvLogicTree`` + ``OrPool`` blocks (each block halves H and W),
+    then a dense logic head and a decoder mapping to class logits.
+
+    Args:
+        in_channels (int): Number of input image channels (e.g. ``3`` for RGB).
+        in_hw (int): Input spatial side length ``H == W``.
+        channels (list[int]): Per-block output channel counts; one
+            ``ConvLogicTree`` + ``OrPool`` block per entry, each halving H, W.
+        head_width (int, optional): Width of each dense-head logic layer when
+            ``head_widths`` is not given. Default ``None``.
+        num_classes (int): Number of output classes. Default ``10``.
+        tree_depth (int): Gate-tree depth passed to every conv block. Default ``2``.
+        kernel (int): Conv kernel side length; padding is ``kernel // 2``.
+            Default ``3``.
+        connect (str): Conv leaf wiring, ``"topk"`` (default) or ``"fixed"``
+            (see :class:`~silogic.conv.ConvLogicTree`).
+        k (int): Top-K candidate pool size for conv leaves. Default ``4``.
+        head_connect (str): Head connectivity. ``"topk"`` (default, learnable
+            Top-K), ``"fixed"``/``"f"`` (fixed random), or ``"l"``/``"dense"``
+            (fully connected); other values are passed through verbatim.
+        head_k (int): Top-K fan-in per neuron in each head logic layer. Default ``8``.
+        head_depth (int): Number of head logic layers when ``head_widths`` is not
+            given (uniform ``head_width`` each). Default ``2``.
+        n_chan (int): Input channels each conv tree may observe. Default ``2``.
+        residual_init (bool): Residual gate initialization for conv blocks
+            (bias toward pass-through ``"A"``). Default ``True``.
+        tau (float): Temperature divisor for the ``GroupSum`` decoder. Default ``100.0``.
+        seed (int): Base RNG seed (offset per block/layer). Default ``0``.
+        residual (bool): Per-node XOR skip inside each conv tree. Default ``False``.
+        wire_residual (float): Fraction of each conv block's output channels
+            replaced by hardwired (OR-pooled) copies of input channels, forming
+            an identity backbone (Gumbel-safe, no discretization gap). ``0.0``
+            disables it. Default ``0.0``.
+        head_widths (list[int], optional): Explicit per-layer dense-head widths
+            (e.g. tapering ``1280k -> 640k -> 320k``); overrides
+            ``head_width`` x ``head_depth``. Default ``None``.
+        decoder (str): Output decoder. ``"groupsum"`` (default, fixed block-sum;
+            requires ``head_widths[-1] % num_classes == 0``) or ``"linear"``
+            (learned FC over the final logic features; deviates from the paper).
+    """
     def __init__(self, in_channels, in_hw, channels, head_width=None,
                  num_classes=10, tree_depth=2, kernel=3, connect="topk",
                  k=4, head_connect="topk", head_k=8, head_depth=2,

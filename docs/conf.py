@@ -17,7 +17,7 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",      # Google/NumPy-style docstrings
     "sphinx.ext.intersphinx",
-    "sphinx.ext.viewcode",
+    "sphinx.ext.linkcode",      # [source] links point at GitHub
     "myst_parser",              # Markdown support
     "sphinx_copybutton",
     "sphinx_design",
@@ -63,7 +63,7 @@ html_theme_options = {
     "show_prev_next": True,
     "navbar_align": "left",
     "navbar_end": ["theme-switcher", "navbar-icon-links"],
-    "secondary_sidebar_items": ["page-toc", "sourcelink"],
+    "secondary_sidebar_items": ["page-toc"],
     "footer_start": ["copyright"],
     "footer_end": ["sphinx-version"],
     "header_links_before_dropdown": 5,
@@ -80,3 +80,39 @@ html_context = {
 # Cleaner signatures (drop the long module prefix on class/func names).
 add_module_names = False
 python_use_unqualified_type_names = True
+
+# Don't show the per-page reStructuredText "Show Source" link (use GitHub instead).
+html_show_sourcelink = False
+
+
+# -- linkcode: map each documented object to its source on GitHub -------------
+import inspect          # noqa: E402
+import os               # noqa: E402
+import sys              # noqa: E402
+
+_GITHUB = "https://github.com/gaspardol/silogic/blob/main"
+_PKG_DIR = os.path.dirname(silogic.__file__)
+
+
+def linkcode_resolve(domain, info):
+    """Return the GitHub URL (with line range) for a documented Python object."""
+    if domain != "py" or not info.get("module"):
+        return None
+    mod = sys.modules.get(info["module"])
+    if mod is None:
+        return None
+    obj = mod
+    for part in info["fullname"].split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    obj = inspect.unwrap(obj)            # see through @torch.no_grad etc.
+    try:
+        fn = inspect.getsourcefile(obj)
+        lines, start = inspect.getsourcelines(obj)
+    except (TypeError, OSError):
+        return None
+    if not fn:
+        return None
+    rel = os.path.relpath(fn, _PKG_DIR)
+    return f"{_GITHUB}/silogic/{rel}#L{start}-L{start + len(lines) - 1}"

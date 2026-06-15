@@ -24,6 +24,15 @@ def binarize(x, thresholds):
     """x: float tensor [N, C, H, W] in [0,1]. Returns uint8 [N, C*H*W*len(thr)].
 
     Thermometer encoding: one bit per threshold per pixel, concatenated.
+
+    Args:
+        x (torch.Tensor): Float image tensor ``[N, C, H, W]`` in ``[0, 1]``.
+        thresholds (list[float]): Thermometer levels in ``[0, 1]``; one bit
+            ``x >= t`` is emitted per threshold.
+
+    Returns:
+        torch.Tensor: uint8 tensor ``[N, C*H*W*len(thresholds)]`` (flattened,
+        per-threshold bit planes concatenated).
     """
     n = x.shape[0]
     flat = x.reshape(n, -1)
@@ -64,7 +73,18 @@ FIVE_THRESH = [1/6, 2/6, 3/6, 4/6, 5/6]  # 5-bit precision as in LogicTreeNet B/
 
 
 def binarize_spatial(x, thresholds):
-    """x: [N,C,H,W] in [0,1] -> [N, C*len(thr), H, W] uint8 (thermometer)."""
+    """x: [N,C,H,W] in [0,1] -> [N, C*len(thr), H, W] uint8 (thermometer).
+
+    Args:
+        x (torch.Tensor): Float image tensor ``[N, C, H, W]`` in ``[0, 1]``.
+        thresholds (list[float]): Thermometer levels in ``[0, 1]``; one bit
+            plane ``x >= t`` per threshold.
+
+    Returns:
+        torch.Tensor: uint8 tensor ``[N, C*len(thresholds), H, W]`` with the
+        spatial dimensions preserved (per-threshold planes concatenated on the
+        channel axis).
+    """
     bits = [(x >= t).to(torch.uint8) for t in thresholds]
     return torch.cat(bits, dim=1)
 
@@ -85,6 +105,17 @@ def edge_bits(x, edge_thr=None):
     For each colour channel, apply Sobel-x, Sobel-y, Laplacian; threshold each
     signed response at +/- each level -> 2 bits. 3 colours x 3 detectors x
     2 x len(thr) channels.
+
+    Args:
+        x (torch.Tensor): Float image tensor ``[N, C, H, W]`` in ``[0, 1]``
+            (``C`` colour channels, typically ``3``).
+        edge_thr (list[float], optional): Magnitude levels for the signed
+            responses; each emits two bits (``> t`` and ``< -t``). Defaults to
+            ``EDGE_THRESH`` (``[0.12, 0.25]``) when ``None``.
+
+    Returns:
+        torch.Tensor: uint8 tensor ``[N, C*3*2*len(edge_thr), H, W]`` of
+        edge/curvature detector bits at the original spatial resolution.
     """
     if edge_thr is None:
         edge_thr = EDGE_THRESH
@@ -104,7 +135,24 @@ def get_cifar_spatial(thresholds=None, n_aug=8, device="cuda", seed=0,
                       edges=False):
     """CIFAR-10 as spatial binary channels for convolutional logic nets.
 
-    Returns (Xtr [N,Ck,32,32] uint8, ytr, Xte, yte, channels).
+    Returns (Xtr [N,Ck,32,32] uint8, ytr, Xte, yte, channels). Results are
+    cached to disk keyed by all arguments.
+
+    Args:
+        thresholds (list[float], optional): Thermometer levels in ``[0, 1]``.
+            Defaults to ``CIFAR3_THRESH`` (``[0.25, 0.5, 0.75]``) when ``None``.
+        n_aug (int): Number of augmented train copies (random crop + horizontal
+            flip); ``max(1, n_aug)`` copies are generated. Default ``8``.
+        device (str): Device used to run augmentation. Default ``"cuda"``.
+        seed (int): RNG seed for augmentation; part of the cache key.
+            Default ``0``.
+        edges (bool): If ``True`` append Sobel/Laplacian edge channels via
+            :func:`edge_bits`. Default ``False``.
+
+    Returns:
+        tuple: ``(Xtr, ytr, Xte, yte, channels)`` where ``Xtr`` is uint8
+        ``[N, channels, 32, 32]``, ``ytr``/``yte`` are integer labels, ``Xte``
+        is the encoded test set and ``channels`` (int) is the channel count.
     """
     if thresholds is None:
         thresholds = CIFAR3_THRESH
@@ -151,7 +199,24 @@ def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
     richness that lifts a ``LogicTreeNet`` to ~87.5% hard accuracy (vs ~85% for
     the flat FC ``LogicNet``). Light affine-only augmentation (no elastic, which
     distorts garments and caps accuracy). Returns
-    (Xtr [N,Ck,28,28] uint8, ytr, Xte, yte, channels).
+    (Xtr [N,Ck,28,28] uint8, ytr, Xte, yte, channels). Results are cached to
+    disk keyed by all arguments.
+
+    Args:
+        thresholds (list[float], optional): Thermometer levels in ``[0, 1]``.
+            Defaults to ``FIVE_THRESH`` (5 levels) when ``None``.
+        n_aug (int): Number of augmented train copies (random affine);
+            ``max(1, n_aug)`` copies are generated. Default ``2``.
+        device (str): Device used to run augmentation. Default ``"cuda"``.
+        seed (int): RNG seed for augmentation; part of the cache key.
+            Default ``0``.
+        edges (bool): If ``True`` append Sobel/Laplacian edge channels via
+            :func:`edge_bits`. Default ``True``.
+
+    Returns:
+        tuple: ``(Xtr, ytr, Xte, yte, channels)`` where ``Xtr`` is uint8
+        ``[N, channels, 28, 28]``, ``ytr``/``yte`` are integer labels, ``Xte``
+        is the encoded test set and ``channels`` (int) is the channel count.
     """
     if thresholds is None:
         thresholds = FIVE_THRESH
@@ -185,7 +250,26 @@ def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
 
 def get_dataset_cached(dataset, thresholds=None, augment=True, n_aug=None,
                        device="cuda", seed=0):
-    """Cache the (expensive) augmented binarized dataset to disk."""
+    """Cache the (expensive) augmented binarized dataset to disk.
+
+    Thin disk-caching wrapper around :func:`get_dataset`; on a cache miss it
+    computes and stores the result keyed by all arguments.
+
+    Args:
+        dataset (str): One of ``"mnist"``, ``"fmnist"``, ``"cifar10"``.
+        thresholds (list[float], optional): Thermometer levels in ``[0, 1]``;
+            dataset-specific defaults are used when ``None``. Default ``None``.
+        augment (bool): If ``True`` generate augmented copies. Default ``True``.
+        n_aug (int, optional): Number of augmented copies; a dataset-specific
+            default is used when ``None``. Default ``None``.
+        device (str): Device used to run augmentation. Default ``"cuda"``.
+        seed (int): RNG seed for augmentation; part of the cache key.
+            Default ``0``.
+
+    Returns:
+        tuple: ``(Xtr, ytr, Xte, yte, in_dim)`` as returned by
+        :func:`get_dataset`.
+    """
     os.makedirs(CACHE_DIR, exist_ok=True)
     thr = thresholds
     tag = f"{dataset}_thr{len(thr) if thr else 'def'}_aug{augment}_n{n_aug}_s{seed}"
@@ -204,7 +288,26 @@ def get_dataset(dataset, thresholds=None, augment=True, n_aug=None,
                 device="cuda"):
     """Return (Xtrain_uint8, ytrain, Xtest_uint8, ytest, in_dim).
 
-    Augmented training copies are pre-generated once and binarized.
+    Augmented training copies are pre-generated once and binarized (flat
+    thermometer encoding for the FC ``LogicNet``).
+
+    Args:
+        dataset (str): One of ``"mnist"``, ``"fmnist"``, ``"cifar10"``.
+        thresholds (list[float], optional): Thermometer levels in ``[0, 1]``.
+            Defaults per dataset when ``None`` (``MNIST_THRESH`` for
+            ``"mnist"``, ``SEVEN_THRESH`` for ``"fmnist"``/``"cifar10"``).
+        augment (bool): If ``True`` (and ``n_aug > 1``) generate augmented
+            train copies; otherwise binarize the raw train set. Default
+            ``True``.
+        n_aug (int, optional): Number of augmented copies; defaults per dataset
+            when ``None`` (``10`` for MNIST/FMNIST, ``8`` for CIFAR-10).
+            Default ``None``.
+        device (str): Device used to run augmentation. Default ``"cuda"``.
+
+    Returns:
+        tuple: ``(Xtr, ytr, Xte, yte, in_dim)`` where ``Xtr``/``Xte`` are uint8
+        feature tensors ``[N, in_dim]``, ``ytr``/``yte`` are integer labels and
+        ``in_dim`` (int) is the flattened input dimension.
     """
     if thresholds is None:
         thresholds = {"mnist": MNIST_THRESH, "fmnist": SEVEN_THRESH,

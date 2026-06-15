@@ -100,7 +100,15 @@ HARD_GATE = {"enabled": False}
 
 def ste_threshold(s):
     """Straight-through binary threshold: forward = (s>0) in {0,1}, backward =
-    gradient of sigmoid(s). Output is a relaxed Boolean in {0,1} (forward)."""
+    gradient of sigmoid(s). Output is a relaxed Boolean in {0,1} (forward).
+
+    Args:
+        s (torch.Tensor): Real-valued pre-activation; thresholded at ``0``.
+
+    Returns:
+        torch.Tensor: Same shape as ``s``; forward values in ``{0, 1}``
+        carrying the ``sigmoid(s)`` gradient (straight-through).
+    """
     hard = (s > 0).float()
     soft = torch.sigmoid(s)
     return hard + soft - soft.detach()
@@ -109,7 +117,16 @@ def ste_threshold(s):
 def sign_ste(w):
     """Binarize weights to {-1,+1} (forward) with clipped straight-through
     gradient (backward), BNN-style. A +/-1 weight on a binary wire = pass or
-    invert = a free NOT gate in hardware."""
+    invert = a free NOT gate in hardware.
+
+    Args:
+        w (torch.Tensor): Real-valued weights; sign taken at ``0`` (``w >= 0``
+            maps to ``+1``, else ``-1``).
+
+    Returns:
+        torch.Tensor: Same shape as ``w``; forward values in ``{-1, +1}``
+        carrying the gradient of ``clamp(w, -1, 1)`` (straight-through).
+    """
     hard = torch.where(w >= 0, 1.0, -1.0)
     clip = torch.clamp(w, -1, 1)
     return clip + (hard - clip).detach()
@@ -118,7 +135,17 @@ def sign_ste(w):
 def ternary_ste(w, delta=0.5):
     """Ternarize weights to {-1,0,+1} (forward), straight-through (backward).
     0 = no connection (drops out of the popcount -> sparser, cheaper circuit);
-    +/-1 = pass / invert (free NOT gate). Lets the network learn connectivity."""
+    +/-1 = pass / invert (free NOT gate). Lets the network learn connectivity.
+
+    Args:
+        w (torch.Tensor): Real-valued weights to ternarize.
+        delta (float): Dead-zone half-width; ``w > delta`` maps to ``+1``,
+            ``w < -delta`` maps to ``-1``, otherwise ``0``. Default ``0.5``.
+
+    Returns:
+        torch.Tensor: Same shape as ``w``; forward values in ``{-1, 0, +1}``
+        carrying the gradient of ``clamp(w, -1, 1)`` (straight-through).
+    """
     hard = torch.where(w > delta, 1.0, torch.where(w < -delta, -1.0, 0.0))
     clip = torch.clamp(w, -1, 1)
     return clip + (hard - clip).detach()
@@ -127,7 +154,21 @@ def ternary_ste(w, delta=0.5):
 def gate_probs(logits, training, dim=-1):
     """Return per-gate selection weights. With Gumbel enabled + training, this
     is a hard one-hot (forward) carrying soft Gumbel-softmax gradient (ST).
-    Otherwise a plain softmax."""
+    Otherwise a plain softmax.
+
+    Args:
+        logits (torch.Tensor): Gate logits over the 16 Boolean functions
+            (reduced along ``dim``).
+        training (bool): Whether in training mode. Hard one-hot paths
+            (``GUMBEL``/``HARD_GATE``) only activate when ``True``.
+        dim (int): Axis to softmax/one-hot over (the 16-gate axis).
+            Default ``-1``.
+
+    Returns:
+        torch.Tensor: Same shape as ``logits``; a softmax distribution, or a
+        straight-through one-hot when Gumbel (``GUMBEL["enabled"]``) or hard
+        gating (``HARD_GATE["enabled"]``) is on during training.
+    """
     if GUMBEL["enabled"] and training:
         return F.gumbel_softmax(logits, tau=GUMBEL["tau"], hard=True, dim=dim)
     soft = F.softmax(logits, dim=dim)
@@ -142,11 +183,35 @@ class LogicLayer(nn.Module):
     """A single layer of logic gates with a configurable connectome.
 
     Args:
-        in_dim:   number of inputs (size of previous layer / input vector).
-        out_dim:  number of gates in this layer.
-        connectome: one of {"F", "L", "TopK"}.
-        k:        number of candidates per input for TopK.
-        gate_eval: "basis" (BasisProj) or "full" (FullEval).
+        in_dim (int): Number of binary inputs (size of previous layer / input
+            vector).
+        out_dim (int): Number of logic gates in this layer (output width).
+        connectome (str): Input wiring strategy; one of ``"F"`` (fixed random
+            wiring, no learnable connections), ``"L"`` (dense learnable
+            connectome, softmax over all previous nodes), ``"TopK"`` (default;
+            each input picks among ``k`` random candidates via a learnable
+            softmax), ``"BlockTopK"`` (TopK with candidates drawn from a
+            contiguous window for cache-local gathers), ``"ST"`` (unweighted
+            sum-threshold: ``threshold(BN(popcount of k candidate wires))``),
+            ``"STW"`` (weighted sum-threshold with binary ``{-1,+1}`` weights),
+            ``"STT"`` (weighted sum-threshold with ternary ``{-1,0,+1}``
+            weights for learnable sparsity).
+        k (int): Number of candidate wires per gate-input for the ``"TopK"``,
+            ``"BlockTopK"``, ``"ST"``, ``"STW"``, ``"STT"`` connectomes
+            (clamped to ``in_dim``). Default ``8``. Ignored by ``"F"``/``"L"``.
+        gate_eval (str): Soft gate evaluation path; ``"basis"`` (default,
+            BasisProj: project gate distribution into the ``{1,A,B,A*B}`` basis
+            and evaluate once) or ``"full"`` (FullEval: evaluate all 16 soft
+            gate functions explicitly).
+        seed (int | None): Seed for the RNG that fixes the random wiring
+            (candidate/fixed indices). ``None`` (default) leaves wiring
+            unseeded.
+        residual (bool): If ``True``, add a hard-wired structural XOR skip
+            ``out = XOR(gate(a,b), a)`` so a residual highway survives gate
+            resampling. Requires matching in/out width. Default ``False``.
+        window (int): For ``"BlockTopK"``, width of the contiguous candidate
+            window; ``0`` (default) uses ``max(4*k, 256)`` (clamped to
+            ``in_dim``). Ignored by other connectomes.
     """
 
     def __init__(self, in_dim, out_dim, connectome="TopK", k=8,
@@ -422,7 +487,17 @@ class LogicLayer(nn.Module):
 
 
 class GroupSum(nn.Module):
-    """Aggregate logic outputs into class logits by group counting."""
+    """Aggregate logic outputs into class logits by group counting.
+
+    Splits the ``width`` logic outputs into ``num_classes`` equal blocks and
+    sums each block (divided by ``tau``) to form per-class logits.
+
+    Args:
+        num_classes (int): Number of output classes / blocks; the input width
+            must be divisible by it. Default ``10``.
+        tau (float): Temperature; each class logit is its block sum divided by
+            ``tau``. Default ``1.0``.
+    """
 
     def __init__(self, num_classes=10, tau=1.0):
         super().__init__()
@@ -443,7 +518,43 @@ class GroupSum(nn.Module):
 
 
 class LogicNet(nn.Module):
-    """Stack of logic layers + GroupSum head."""
+    """Stack of logic layers followed by a GroupSum (or learned) head.
+
+    Args:
+        in_dim (int): Number of binary input features.
+        width (int): Logic gates per layer (output width of every layer).
+        depth (int): Number of stacked :class:`LogicLayer` layers.
+        num_classes (int): Number of output classes. Default ``10``.
+        connectome (str): Per-layer input wiring; one of ``"F"`` (fixed
+            random), ``"L"`` (dense learnable softmax), ``"TopK"`` (sparse,
+            default), ``"BlockTopK"``, ``"ST"``, ``"STW"``, ``"STT"``.
+            See :class:`LogicLayer` for the meaning of each.
+        k (int): Candidates per gate-input for the sparse connectomes
+            (``"TopK"``/``"BlockTopK"``/``"ST"``/``"STW"``/``"STT"``).
+            Default ``8``.
+        tau (float): GroupSum temperature (logits are the block sum / ``tau``).
+            Used only by the ``"groupsum"`` decoder. Default ``1.0``.
+        gate_eval (str): Soft gate evaluation path; ``"basis"`` (default) or
+            ``"full"``. See :class:`LogicLayer`.
+        seed (int | None): Base seed for per-layer random wiring; layer ``i``
+            uses ``seed*1000 + i``. ``None`` leaves wiring unseeded.
+            Default ``0``.
+        residual (bool): Enable the structural XOR skip in same-width layers
+            (active from the first layer whose input width equals ``width``).
+            Default ``False``.
+        wire_residual (float): Fraction of each same-width layer's outputs to
+            hard-wire as identity copies of its input (a grad-1 highway,
+            ``0`` gates); rounded to ``int(width * wire_residual)``.
+            Default ``0.0`` (disabled).
+        decoder (str): Output head; one of ``"groupsum"`` (default, fixed
+            block-sum :class:`GroupSum`), ``"linear"`` (learned
+            ``Linear(width -> num_classes)``), ``"linfull"`` (full
+            ``Linear`` initialised to exactly GroupSum, then learns
+            deviations; requires ``width % num_classes == 0``), ``"sumlinear"``
+            (sum features to a 256-d state -> BatchNorm -> linear; requires
+            ``width % 256 == 0``), ``"ternary"`` (per-feature, per-class
+            ``{-1,0,+1}`` ternarized weights generalizing GroupSum).
+    """
 
     def __init__(self, in_dim, width, depth, num_classes=10,
                  connectome="TopK", k=8, tau=1.0, gate_eval="basis",

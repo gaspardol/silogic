@@ -14,6 +14,18 @@ _print = functools.partial(print, flush=True)
 
 @torch.no_grad()
 def eval_hard(model, X, y, device, bs=1024):
+    """Top-1 accuracy (%) of the hard Boolean-circuit forward pass.
+
+    Args:
+        model: A logic network exposing ``forward_hard``.
+        X (torch.Tensor): uint8 feature tensor ``[N, ...]``.
+        y (torch.Tensor): Integer labels ``[N]``.
+        device (str): Device to run evaluation on, e.g. ``"cuda"``.
+        bs (int): Eval batch size. Default ``1024``.
+
+    Returns:
+        float: Top-1 accuracy as a percentage.
+    """
     model.eval()
     correct = 0
     for i in range(0, X.shape[0], bs):
@@ -26,6 +38,18 @@ def eval_hard(model, X, y, device, bs=1024):
 
 @torch.no_grad()
 def eval_soft(model, X, y, device, bs=1024):
+    """Top-1 accuracy (%) of the soft (differentiable) forward pass.
+
+    Args:
+        model: A logic network whose ``__call__`` returns class logits.
+        X (torch.Tensor): uint8 feature tensor ``[N, ...]`` (cast to float).
+        y (torch.Tensor): Integer labels ``[N]``.
+        device (str): Device to run evaluation on, e.g. ``"cuda"``.
+        bs (int): Eval batch size. Default ``1024``.
+
+    Returns:
+        float: Top-1 accuracy as a percentage.
+    """
     model.eval()
     correct = 0
     for i in range(0, X.shape[0], bs):
@@ -45,6 +69,45 @@ def train_model(model, Xtr, ytr, Xte, yte, device, epochs=200, bs=256,
     Xtr/Xte are uint8 tensors. If gpu_data, the full train set is moved to
     the GPU once (fast); otherwise batches are moved on the fly. Uses
     torch.compile with static batch shapes (drop_last) for throughput.
+
+    Args:
+        model: Logic network to train; returns class logits and exposes
+            ``forward_hard`` for hard evaluation.
+        Xtr (torch.Tensor): uint8 train feature tensor ``[N, ...]``.
+        ytr (torch.Tensor): Integer train labels ``[N]``.
+        Xte (torch.Tensor): uint8 test feature tensor ``[M, ...]``.
+        yte (torch.Tensor): Integer test labels ``[M]``.
+        device (str): Device to train on, e.g. ``"cuda"`` or ``"cpu"``.
+        epochs (int): Number of training epochs. Default ``200``.
+        bs (int): Training batch size; ``drop_last`` keeps shapes static for
+            ``torch.compile``. Default ``256``.
+        lr (float): Initial learning rate. Default ``0.075``.
+        val_every (int): Validate every this many epochs (plus the final
+            epoch). Default ``25``.
+        gpu_data (bool): If ``True`` move the whole train set to the GPU once
+            (falls back to per-batch transfer on OOM). Default ``True``.
+        log (callable): Logging function called with a status string per
+            validation. Default the module's flushing ``print``.
+        Xval (torch.Tensor, optional): uint8 validation features; if ``None``
+            the test set ``Xte`` is used for validation. Default ``None``.
+        yval (torch.Tensor, optional): Validation labels paired with ``Xval``.
+            Default ``None``.
+        compile_ (bool): If ``True`` wrap the model in ``torch.compile``.
+            Default ``True``.
+        eval_bs (int): Batch size used by the eval passes. Default ``1024``.
+        optimizer (str): Optimizer to use, ``"adam"`` (default) or
+            ``"adamw"``.
+        weight_decay (float): Weight decay, only applied when
+            ``optimizer="adamw"``. Default ``0.0``.
+        cosine (bool): If ``True`` apply cosine LR decay from ``lr`` to ``0``
+            over ``epochs``. Default ``False``.
+
+    Returns:
+        dict: Metrics and history with keys ``"test_soft"`` (float, soft
+        test accuracy %), ``"test_hard"`` (float, hard test accuracy %),
+        ``"train_min"`` (float, wall-clock training time in minutes) and
+        ``"history"`` (dict of per-validation ``"epoch"``, ``"val_acc"`` and
+        ``"bin_val_acc"`` lists).
     """
     model.to(device)
     if optimizer == "adamw":
