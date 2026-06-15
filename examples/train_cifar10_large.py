@@ -5,21 +5,24 @@ reaches ~86.3% on CIFAR-10 in the paper. The architecture (Appendix A.1.1) is:
 
   * conv logic-gate-tree blocks with channels ``[s, 4s, 16s, 32s]`` (G uses
     ``s = 2048`` -> ``[2048, 8192, 32768, 65536]``, ~56M gates), 3x3 depth-3 trees,
-    fixed random leaf wiring (only the gates are learned);
+    with **learnable Top-K leaf connectivity** by default (``--connect fixed`` for
+    the paper's fixed random wiring, where only the gates are learned);
   * a tapering fixed dense logic head ``[1280s, 640s, 320s]`` + GroupSum (tau 450);
   * 5-level thermometer + Sobel/Laplacian edge input channels.
 
 WARNING — this default (``--scale 2048``) is the full ~61M-gate G model:
-  * ~17 GB VRAM at batch 128, and ~10+ hours for 50 epochs on a single GPU
-    (the conv uses the fixed-wiring ``tree_conv`` Triton kernel);
+  * ~17 GB VRAM at batch 128, and many hours for 50 epochs on a single GPU; both
+    wirings use a fused Triton kernel (``tree_conv_topk`` for Top-K, ``tree_conv``
+    for fixed), but Top-K does ~4x the gather work, so it is slower than fixed;
   * trained here with **plain cross-entropy and no knowledge distillation**, so it
     lands well *below* the paper's 86% — that result needs the CNN-teacher KD
     pipeline in ``experiments/train_cifar_g.py``.
 
 Use ``--scale`` to run a lighter version (e.g. ``--scale 256`` is ~1/8 the width):
 
-    python examples/train_cifar10.py --scale 256          # much lighter
-    python examples/train_cifar10.py                       # full G (heavy!)
+    python examples/train_cifar10_large.py --scale 256     # much lighter
+    python examples/train_cifar10_large.py                 # full G (heavy!)
+    python examples/train_cifar10_large.py --connect fixed # paper-G fixed wiring
 """
 import argparse
 import torch
@@ -31,6 +34,10 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--scale", type=int, default=2048,
                    help="G width unit s: channels [s,4s,16s,32s], head [1280s,640s,320s]")
+    p.add_argument("--connect", default="topk", choices=["topk", "fixed"],
+                   help="conv leaf wiring: 'topk' learns it (fused Triton kernel, "
+                        "~4x the gather work of fixed); 'fixed' is the paper-G recipe")
+    p.add_argument("--k", type=int, default=4, help="Top-K leaf candidates (connect=topk)")
     p.add_argument("--tree-depth", type=int, default=3)
     p.add_argument("--n-chan", type=int, default=2,
                    help="input channels each tree may observe")
@@ -60,11 +67,14 @@ def main():
 
     print(f"Building LogicTreeNet-G (scale={s}): conv {channels}, head {head_widths} ...",
           flush=True)
+    # learnable Top-K conv connectivity by default (the LILogic hybrid); the giant
+    # dense head stays fixed ("F") -- a Top-K head that wide is slow to build and
+    # OOMs in the soft forward.
     net = LogicTreeNet(in_channels=ch, in_hw=32, channels=channels,
                        head_widths=head_widths, num_classes=10,
-                       tree_depth=args.tree_depth, kernel=3, connect="fixed",
-                       head_connect="F", n_chan=args.n_chan, residual_init=True,
-                       tau=args.tau, seed=0)
+                       tree_depth=args.tree_depth, kernel=3, connect=args.connect,
+                       k=args.k, head_connect="F", n_chan=args.n_chan,
+                       residual_init=True, tau=args.tau, seed=0)
     print(f"  gates={net.gate_count(32):,}")
 
     out = train_model(net, Xtr, ytr, Xte, yte, args.device,

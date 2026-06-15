@@ -69,7 +69,8 @@ Runnable training scripts (`--help` on each for the full config):
 ```bash
 python examples/train_mnist.py            # FC LogicNet on MNIST
 python examples/train_fashion_mnist.py    # conv LogicTreeNet on FashionMNIST
-python examples/train_cifar10.py          # conv LogicTreeNet on CIFAR-10
+python examples/train_cifar10_small.py    # fast conv LogicTreeNet on CIFAR-10 (~60%)
+python examples/train_cifar10_large.py    # the paper's large LogicTreeNet-G (heavy)
 python examples/train_mnist_warp.py       # arity-4 WARP network on MNIST
 ```
 
@@ -82,7 +83,8 @@ deployable Boolean circuit). Measured with the default configs:
 |---|---|---|
 | `train_mnist.py` | FC `LogicNet` (width 10000 × 6) | **~98.1%** |
 | `train_fashion_mnist.py` | conv `LogicTreeNet` (5-thr + edges) | **~87.5%** |
-| `train_cifar10.py` | LogicTreeNet-G architecture (`--scale` to lighten) | heavy — ~86% needs KD |
+| `train_cifar10_small.py` | conv `LogicTreeNet` (edges) | ~55% (~10 min) |
+| `train_cifar10_large.py` | LogicTreeNet-G architecture (`--scale` to lighten) | heavy — ~86% needs KD |
 | `train_mnist_warp.py` | arity-4 WARP (`WARPNetN`, 2⁴-LUT nodes) | **~86%** |
 
 > MNIST is easy enough for the flat fully-connected `LogicNet`. FashionMNIST and
