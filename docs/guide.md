@@ -1,4 +1,4 @@
-# Silogic API reference
+# User guide
 
 Everything below is importable from the top-level package, e.g.
 `from silogic import LogicNet`. Every logic module subclasses `torch.nn.Module`

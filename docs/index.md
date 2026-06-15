@@ -1,21 +1,45 @@
+---
+sd_hide_title: true
+---
+
 # Silogic
 
-**Differentiable logic-gate networks in PyTorch.**
+```{div} sd-text-center sd-fs-2 sd-font-weight-bold
+Silogic
+```
+
+```{div} sd-text-center sd-fs-5 sd-text-muted
+Differentiable logic-gate networks in PyTorch
+```
 
 Silogic trains neural networks whose neurons are *Boolean logic gates*. During
 training each gate is a smooth, differentiable relaxation; at inference the
 network discretizes into a pure Boolean circuit — argmax over gates and
-connections, integer truth-table lookups, **no multiplies** — which maps
-directly onto FPGA/ASIC LUTs for extremely cheap, low-latency inference.
+connections, integer truth-table lookups, **no multiplies** — which maps directly
+onto FPGA/ASIC LUTs for cheap, low-latency inference.
 
-This package is a compact, hackable reimplementation (plus several extensions)
-of three lines of work:
+::::{grid} 1 1 2 2
+:gutter: 3
 
-| Paper | Contribution here |
-|---|---|
-| **LILogic Net** ([arXiv:2511.12340](https://arxiv.org/abs/2511.12340)) | Learnable Top-K connectivity + `BasisProj` gate evaluation → `LogicLayer` / `LogicNet` |
-| **Convolutional Logic Gate Networks** ([arXiv:2411.04732](https://arxiv.org/abs/2411.04732)) | Logic-gate-tree convolutions + OR pooling → `ConvLogicTree` / `LogicTreeNet` |
-| **WARP** ([arXiv:2602.03527](https://arxiv.org/abs/2602.03527)) | Walsh–Hadamard gate parameterization (4 params/node) → `WARPNet` / `WARPNetN` |
+:::{grid-item-card} {octicon}`book` User guide
+Connectomes, decoders, WARP, and the global toggles.
++++
+```{button-ref} guide
+:color: primary
+:expand:
+Read the guide
+```
+:::
+:::{grid-item-card} {octicon}`code` API reference
+Every public class and function, generated from the docstrings.
++++
+```{button-ref} api
+:color: primary
+:expand:
+Browse the API
+```
+:::
+::::
 
 ## Install
 
@@ -26,10 +50,9 @@ pip install -e ".[triton,dev]"  # + fused CUDA kernels + pytest
 
 ## Quickstart
 
-Every logic module exposes two forward methods:
-
-- `forward(x)` — the **soft**, differentiable circuit (relaxed Booleans in `[0,1]`),
-- `forward_hard(x)` — the **hard**, deployable Boolean circuit (the inference path).
+Every logic module exposes two forward methods — `forward(x)` (the **soft**,
+differentiable circuit) and `forward_hard(x)` (the **hard**, deployable Boolean
+circuit). The gap between their accuracies is the *discretization gap*.
 
 ```python
 import torch
@@ -43,17 +66,21 @@ soft_logits = net(x)                       # differentiable — train against th
 hard_logits = net.forward_hard(x)          # Boolean circuit — deploy this
 ```
 
-## Examples
+## What's implemented
 
-Three runnable training scripts ship in `examples/`:
+| Paper | Contribution |
+|---|---|
+| **LILogic Net** ([arXiv:2511.12340](https://arxiv.org/abs/2511.12340)) | Learnable Top-K connectivity + `BasisProj` → {class}`~silogic.LogicLayer` / {class}`~silogic.LogicNet` |
+| **Convolutional Logic Gate Networks** ([arXiv:2411.04732](https://arxiv.org/abs/2411.04732)) | Logic-gate-tree convolutions + OR pooling → {class}`~silogic.ConvLogicTree` / {class}`~silogic.LogicTreeNet` |
+| **WARP** ([arXiv:2602.03527](https://arxiv.org/abs/2602.03527)) | Walsh–Hadamard gate parameterization → {class}`~silogic.WARPNet` / {class}`~silogic.WARPNetN` |
 
-| script | model | hard test acc |
-|---|---|---|
-| `train_mnist.py` | FC `LogicNet` | ~98.1% |
-| `train_fashion_mnist.py` | conv `LogicTreeNet` (thermometer + edges) | ~87.5% |
-| `train_cifar10.py` | conv `LogicTreeNet` | scales with config |
+Plus k-input LUT nodes ({class}`~silogic.LUTkLayer`) and an attention-like
+pairwise-logic layer ({class}`~silogic.PairLogicLayer`).
 
-## More
+```{toctree}
+:hidden:
+:maxdepth: 2
 
-See the [API Reference](api.md) for the full surface — layers, networks,
-decoders, connectomes, training, data utilities, and global toggles.
+guide
+api
+```

@@ -1,0 +1,23 @@
+/* Minor tweaks on top of pydata-sphinx-theme (the NumPy look). */
+
+/* Roomier content column, like the NumPy/PyTorch API pages. */
+.bd-main .bd-content .bd-article-container {
+  max-width: 60rem;
+}
+
+/* Make autosummary tables breathe and align left. */
+table.autosummary td {
+  padding: 0.4rem 0.6rem;
+}
+table.autosummary td:first-child {
+  white-space: nowrap;
+}
+
+/* Method/attribute signatures: subtle card like torch docs. */
+dl.py.class > dt,
+dl.py.function > dt {
+  background: var(--pst-color-surface);
+  border-left: 3px solid var(--pst-color-primary);
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.2rem;
+}

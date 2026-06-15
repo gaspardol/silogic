@@ -7,8 +7,9 @@ build/
 dist/
 .pytest_cache/
 
-# MkDocs build output
-site/
+# Sphinx build output
+docs/_build/
+docs/generated/
 
 # Large, regenerable local artifacts (datasets, caches, checkpoints, run logs)
 data/

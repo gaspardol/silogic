@@ -53,6 +53,17 @@ def test_warpnet_end_to_end():
     assert net.forward_hard(x).shape == (8, 10)
 
 
+@pytest.mark.parametrize("arity", [2, 4])
+def test_forward_hard_uint8_matches_float(arity):
+    """forward_hard must give identical results for uint8 and float {0,1} inputs
+    (regression: 2*x-1 underflows on uint8 -> garbage hard circuit)."""
+    net = (WARPNet(64, 40, 2, tau=0.5, seed=0) if arity == 2
+           else WARPNetN(64, 40, 2, arity=arity, tau=0.5, residual_p=0.9, seed=0))
+    xf = random_bits(8, 64)                      # float {0,1}
+    xu = xf.to(torch.uint8)                      # same values as uint8
+    assert torch.equal(net.forward_hard(xf), net.forward_hard(xu))
+
+
 @pytest.mark.parametrize("arity", [2, 3, 4])
 def test_warpnet_arity(arity):
     net = WARPNetN(64, 40, 2, arity=arity, tau=0.5, residual_p=0.9, seed=0)

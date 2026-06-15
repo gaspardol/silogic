@@ -86,7 +86,9 @@ class WARPLayer(nn.Module):
 
     @torch.no_grad()
     def forward_hard(self, x):
-        # hard input select (argmax conn), binary inputs -> exact 2-LUT
+        # hard input select (argmax conn), binary inputs -> exact 2-LUT.
+        # cast to float first: x may be uint8, but _z does 2*x-1 (would underflow).
+        x = x.float()
         sa = torch.gather(self.cand_a, 1, self.conn_a.argmax(1, keepdim=True)).squeeze(1)
         sb = torch.gather(self.cand_b, 1, self.conn_b.argmax(1, keepdim=True)).squeeze(1)
         return (self._z(x[:, sa], x[:, sb]) > 0).float()
@@ -157,6 +159,7 @@ class WARPLayerN(nn.Module):
 
     @torch.no_grad()
     def forward_hard(self, x):
+        x = x.float()                                    # uint8-safe: 2*x-1 below
         sel = torch.gather(self.cand, 2, self.conn.argmax(2, keepdim=True)).squeeze(2)  # [out,n]
         u = 2 * x[:, sel] - 1                            # [B,out,n] in {-1,1}
         z = (self._monomials(u) * self.theta[None]).sum(2)
