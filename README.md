@@ -82,15 +82,16 @@ deployable Boolean circuit). Measured with the default configs:
 |---|---|---|
 | `train_mnist.py` | FC `LogicNet` (width 10000 × 6) | **~98.1%** |
 | `train_fashion_mnist.py` | conv `LogicTreeNet` (5-thr + edges) | **~87.5%** |
-| `train_cifar10.py` | conv `LogicTreeNet` (edges, ~2.8M gates) | **~57%** (~60% soft, ~10 min) |
+| `train_cifar10.py` | LogicTreeNet-G architecture (`--scale` to lighten) | heavy — ~86% needs KD |
 | `train_mnist_warp.py` | arity-4 WARP (`WARPNetN`, 2⁴-LUT nodes) | **~86%** |
 
 > MNIST is easy enough for the flat fully-connected `LogicNet`. FashionMNIST and
 > CIFAR-10 have spatial structure, so they use the **convolutional**
-> `LogicTreeNet` (logic-gate-tree convs + OR pooling); the FC net ceilings ~3pp
-> lower on FashionMNIST. For both conv examples the two biggest levers are
-> **edge-detector input channels** and a **low GroupSum `tau`** (high `tau`
-> starves the conv gates of gradient).
+> `LogicTreeNet` (logic-gate-tree convs + OR pooling). The CIFAR example is the
+> paper's large **LogicTreeNet-G** architecture (heavy — see its `--scale` flag
+> and the KD reproduction in `experiments/`); for small conv nets like the
+> FashionMNIST one the two biggest levers are **edge-detector input channels**
+> and a **low GroupSum `tau`** (high `tau` starves the conv gates of gradient).
 
 ## Public API
 
