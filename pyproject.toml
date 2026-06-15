@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silogic"
+version = "0.1.0"
+description = "Differentiable logic-gate networks in PyTorch (LILogic Net, convolutional logic trees, WARP)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Silogic contributors" }]
+keywords = ["logic-gate-networks", "differentiable-logic", "pytorch", "efficient-inference", "fpga"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "torchvision>=0.16",
+]
+
+[project.optional-dependencies]
+# Fused CUDA kernels (FC dense_logic, tree_conv, WARP). Optional: the library
+# falls back to pure-PyTorch paths when Triton/CUDA are unavailable.
+triton = ["triton>=2.2"]
+# Test + example tooling.
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/gaspardol/silogic"
+Documentation = "https://gaspardol.github.io/silogic/"
+Repository = "https://github.com/gaspardol/silogic"
+Issues = "https://github.com/gaspardol/silogic/issues"
+
+[tool.setuptools]
+packages = ["silogic"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
