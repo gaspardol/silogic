@@ -2,7 +2,6 @@
 import pytest
 import torch
 
-import silogic.model as M
 from silogic import (LogicLayer, LogicNet, GroupSum, BASIS_COEFFS, TRUTH_TABLES,
                      ste_threshold, sign_ste, ternary_ste)
 from conftest import random_bits, harden_logic_layer
@@ -125,18 +124,25 @@ def test_ste_helpers():
     assert s.grad is not None and s.grad.item() > 0
 
 
-def test_gumbel_and_hard_gate_toggles():
-    """Stochastic Gumbel-ST and deterministic hard-gate ST run and stay binary
-    at inference. Toggles are restored to avoid leaking global state."""
-    net = LogicNet(in_dim=64, width=40, depth=2, connectome="TopK", k=8, seed=0)
+@pytest.mark.parametrize("gate_select", ["gumbel", "hard"])
+def test_gate_select_modes(gate_select):
+    """Stochastic Gumbel-ST and deterministic hard-gate ST run (as a per-layer
+    constructor arg) and stay binary at inference."""
+    net = LogicNet(in_dim=64, width=40, depth=2, connectome="TopK", k=8, seed=0,
+                   gate_select=gate_select)
     x = random_bits(8, 64)
-    for flag in (M.GUMBEL, M.HARD_GATE):
-        flag["enabled"] = True
-        try:
-            net.train()
-            net(x).sum().backward()
-            net.eval()
-            h = net.forward_hard(x)
-            assert h.shape == (8, 10)
-        finally:
-            flag["enabled"] = False
+    net.train()
+    net(x).sum().backward()
+    net.eval()
+    assert net.forward_hard(x).shape == (8, 10)
+
+
+def test_per_layer_gate_select():
+    """A network can mix soft and hard gates: gate_select as a per-layer list."""
+    net = LogicNet(in_dim=64, width=40, depth=3, connectome="TopK", k=8, seed=0,
+                   gate_select=["softmax", "hard", "gumbel"])
+    assert [l.node.gate_select for l in net.layers] == ["softmax", "hard", "gumbel"]
+    x = random_bits(8, 64)
+    net.train()
+    net(x).sum().backward()
+    assert net.forward_hard(x).shape == (8, 10)

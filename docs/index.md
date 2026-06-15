@@ -74,8 +74,8 @@ hard_logits = net.forward_hard(x)          # Boolean circuit — deploy this
 | **Convolutional Logic Gate Networks** ([arXiv:2411.04732](https://arxiv.org/abs/2411.04732)) | Logic-gate-tree convolutions + OR pooling → {class}`~silogic.ConvLogicTree` / {class}`~silogic.LogicTreeNet` |
 | **WARP** ([arXiv:2602.03527](https://arxiv.org/abs/2602.03527)) | Walsh–Hadamard gate parameterization → {class}`~silogic.WARPNet` / {class}`~silogic.WARPNetN` |
 
-Plus k-input LUT nodes ({class}`~silogic.LUTkLayer`) and an attention-like
-pairwise-logic layer ({class}`~silogic.PairLogicLayer`).
+Plus k-input LUT nodes ({class}`~silogic.LUTkLayer`) and the BitLogic
+relaxations ({class}`~silogic.LUTNodeLayer`).
 
 ```{toctree}
 :hidden:

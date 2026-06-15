@@ -27,13 +27,13 @@ from silogic import LogicTreeNet, get_cifar_spatial, train_model, CIFAR3_THRESH
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--channels", type=int, nargs="+", default=[128, 256, 256],
+    p.add_argument("--channels", type=int, nargs="+", default=[64, 128],
                    help="conv logic-tree channels per block (each halves H,W)")
-    p.add_argument("--tree-depth", type=int, default=3)
+    p.add_argument("--tree-depth", type=int, default=1)
     p.add_argument("--k", type=int, default=4, help="Top-K leaf candidates")
-    p.add_argument("--n-chan", type=int, default=2,
+    p.add_argument("--n-chan", type=int, default=4,
                    help="input channels each tree may observe")
-    p.add_argument("--head-width", type=int, default=2560)
+    p.add_argument("--head-width", type=int, nargs="+", default=8*2560)
     p.add_argument("--head-k", type=int, default=8)
     p.add_argument("--tau", type=float, default=10.0, help="GroupSum temperature")
     p.add_argument("--no-edges", dest="edges", action="store_false",
@@ -42,7 +42,7 @@ def main():
     p.add_argument("--n-aug", type=int, default=2, help="augmented train copies")
     p.add_argument("--epochs", type=int, default=25)
     p.add_argument("--batch-size", type=int, default=128)
-    p.add_argument("--lr", type=float, default=0.02)
+    p.add_argument("--lr", type=float, default=0.01)
     p.add_argument("--download", action="store_true",
                    help="download the dataset via torchvision if not already present")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -57,7 +57,8 @@ def main():
     print(f"  channels={ch}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
     net = LogicTreeNet(in_channels=ch, in_hw=32, channels=args.channels,
-                       head_widths=[args.head_width], num_classes=10,
+                       head_widths=[args.head_width, args.head_width], num_classes=10,
+                       node="hybrid", arity=6, connect="topk",
                        tree_depth=args.tree_depth, k=args.k, n_chan=args.n_chan,
                        head_k=args.head_k, tau=args.tau, seed=0)
     print(f"Model: LogicTreeNet channels={args.channels} "

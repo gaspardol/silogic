@@ -6,7 +6,7 @@ import functools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .model import LogicNet
+from .models import LogicNet
 
 torch.set_float32_matmul_precision("high")
 _print = functools.partial(print, flush=True)

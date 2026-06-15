@@ -1,21 +1,27 @@
 """Silogic — differentiable logic-gate networks in PyTorch.
 
 A compact, hackable reimplementation (and several extensions) of differentiable
-logic gate networks:
+logic gate networks. The library is organized around three small registries that
+compose into every model:
 
-  * **LILogic Net** (arXiv:2511.12340) — learnable Top-K connectivity + BasisProj.
-  * **Convolutional Logic Gate Networks** (Petersen et al., arXiv:2411.04732) —
-    logic-gate-tree convolutions + OR pooling + residual init (``LogicTreeNet``).
-  * **WARP** (arXiv:2602.03527) — Walsh–Hadamard gate parameterization
-    (4 params/node vs 16) with stochastic smoothing (``WARPNet``, ``WARPNetN``).
-  * Extra node types: k-input LUTs (``LUTkLayer``) and attention-like pairwise
-    logic (``PairLogicLayer``).
+  * **nodes** (:mod:`silogic.nodes`) — the gate/LUT *parameterization*: the 16
+    two-input functions (``"gate16"``), Walsh/WARP coefficients (``"walsh"``),
+    multilinear k-LUTs (``"multilinear"``), and the ``"hybrid"``/``"linear"``/
+    ``"polynomial"`` relaxations. 2-input and n-input.
+  * **connectomes** (:mod:`silogic.connectomes`) — the input *wiring*:
+    ``"fixed"`` / ``"dense"`` / ``"topk"`` / ``"blocktopk"`` / ``"st"`` / ``"stw"``
+    / ``"stt"``.
+  * **heads** (:mod:`silogic.heads`) — the *decoder*: ``GroupSum`` or a learned
+    ``"linear"`` / ``"linfull"`` / ``"sumlinear"`` / ``"ternary"`` readout.
 
-Every module follows the standard PyTorch ``nn.Module`` convention. In addition
-to the usual differentiable ``forward`` (relaxed Boolean values in ``[0, 1]``),
-each logic module exposes a ``forward_hard`` that runs the discretized Boolean
-circuit actually deployed at inference — argmax over gates/connections, integer
-truth-table lookups. Comparing the two measures the discretization gap.
+A :class:`LogicLayer` is ``connectome + node``; a :class:`LogicNet` stacks layers
+and adds a head. The convolutional side mirrors this exactly: a
+:class:`ConvLogicLayer` (gate-tree convolution) and a :class:`LogicConvNet` that
+stacks conv blocks + a logic head. Named presets (``WARPNet``, ``LUTkNet``,
+``LogicTreeNet``, …) just fix those choices. Every logic module exposes a
+differentiable ``forward`` (relaxed Booleans in ``[0,1]``) and a discretized
+``forward_hard`` (the deployed Boolean circuit); comparing them measures the
+discretization gap.
 
 Quickstart
 ----------
@@ -30,73 +36,53 @@ torch.Size([16, 10])
 
 __version__ = "0.1.0"
 
-# --- core FC logic network -------------------------------------------------
-from .model import (
-    LogicLayer,
-    LogicNet,
-    GroupSum,
-    BASIS_COEFFS,
-    TRUTH_TABLES,
-    ste_threshold,
-    sign_ste,
-    ternary_ste,
-    gate_probs,
-    GUMBEL,
-    HARD_GATE,
+# --- gate algebra + straight-through primitives ---------------------------
+from .functional import (
+    BASIS_COEFFS, TRUTH_TABLES,
+    ste_threshold, sign_ste, ternary_ste, binarize_ste, gate_probs,
+    residual_logit,
 )
 
-# --- convolutional logic-gate trees ---------------------------------------
-from .conv import ConvLogicTree, OrPool
-from .treenet import LogicTreeNet
+# --- registries: input wiring, node parameterization, decoders ------------
+from .connectomes import build_connectome
+from .nodes import build_node, NODES, RELAXATIONS
+from .heads import GroupSum, build_decoder
 
-# --- WARP (Walsh–Hadamard) logic networks ---------------------------------
-from .warp import (
-    WARPLayer,
-    WARPNet,
-    WARPLayerN,
-    WARPNetN,
-    WARP_GUMBEL,
-)
+# --- layers: unified FC layer + conv layer + named presets ----------------
+from .layers import (LogicLayer, WARPLayer, WARPLayerN, LUTkLayer, LUTNodeLayer,
+                     ConvLogicTree, ConvLogicLayer, OrPool)
 
-# --- alternative node types -----------------------------------------------
-from .lutk import LUTkLayer, LUTkNet
-from .pairlogic import PairLogicLayer, PairLogicNet
+# --- networks: generic builders + presets (FC and convolutional) ----------
+from .models import (LogicNet, WARPNet, WARPNetN, LUTkNet, LUTNodeNet,
+                     LogicConvNet, LogicTreeNet)
 
-# --- unified LUT-node relaxations + learned encoders (BitLogic-style) ------
-from .nodes import LUTNodeLayer, LUTNodeNet, RELAXATIONS, residual_logit
+# --- learned input encoders -----------------------------------------------
 from .encoders import LearnedThermometerEncoder
 
 # --- training + data ------------------------------------------------------
 from .train import train_model, eval_hard, eval_soft
 from .data import (
-    get_dataset,
-    get_dataset_cached,
-    get_cifar_spatial,
-    get_fmnist_spatial,
-    binarize,
-    binarize_spatial,
-    edge_bits,
-    MNIST_THRESH,
-    SEVEN_THRESH,
-    FOUR_THRESH,
-    FIVE_THRESH,
-    CIFAR3_THRESH,
+    get_dataset, get_dataset_cached, get_cifar_spatial, get_fmnist_spatial,
+    binarize, binarize_spatial, edge_bits,
+    MNIST_THRESH, SEVEN_THRESH, FOUR_THRESH, FIVE_THRESH, CIFAR3_THRESH,
     EDGE_THRESH,
 )
 
 __all__ = [
     "__version__",
-    # core
-    "LogicLayer", "LogicNet", "GroupSum", "BASIS_COEFFS", "TRUTH_TABLES",
-    "ste_threshold", "sign_ste", "ternary_ste", "gate_probs",
-    "GUMBEL", "HARD_GATE",
-    # conv
-    "ConvLogicTree", "OrPool", "LogicTreeNet",
-    # warp
-    "WARPLayer", "WARPNet", "WARPLayerN", "WARPNetN", "WARP_GUMBEL",
-    # node types
-    "LUTkLayer", "LUTkNet", "PairLogicLayer", "PairLogicNet",
-    "LUTNodeLayer", "LUTNodeNet", "RELAXATIONS", "residual_logit",
+    # primitives
+    "BASIS_COEFFS", "TRUTH_TABLES", "ste_threshold", "sign_ste", "ternary_ste",
+    "binarize_ste", "gate_probs", "residual_logit",
+    # registries
+    "build_connectome", "build_node", "NODES", "RELAXATIONS",
+    "GroupSum", "build_decoder",
+    # layers + presets (FC + conv)
+    "LogicLayer", "WARPLayer", "WARPLayerN", "LUTkLayer", "LUTNodeLayer",
+    "ConvLogicTree", "ConvLogicLayer", "OrPool",
+    # networks (FC + conv)
+    "LogicNet", "WARPNet", "WARPNetN", "LUTkNet", "LUTNodeNet",
+    "LogicConvNet", "LogicTreeNet",
+    # encoders
     "LearnedThermometerEncoder",
     # training
     "train_model", "eval_hard", "eval_soft",

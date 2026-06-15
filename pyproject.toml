@@ -43,7 +43,7 @@ Repository = "https://github.com/gaspardol/silogic"
 Issues = "https://github.com/gaspardol/silogic/issues"
 
 [tool.setuptools]
-packages = ["silogic"]
+packages = ["silogic", "silogic.kernels"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

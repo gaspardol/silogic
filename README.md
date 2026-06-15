@@ -20,9 +20,7 @@ of three lines of work:
 | **LILogic Net** ([arXiv:2511.12340](https://arxiv.org/abs/2511.12340)) | Learnable Top-K connectivity + `BasisProj` 4-coefficient gate evaluation → `LogicLayer` / `LogicNet` |
 | **Convolutional Logic Gate Networks** ([arXiv:2411.04732](https://arxiv.org/abs/2411.04732)) | Logic-gate-tree convolutions + OR pooling + residual init → `ConvLogicTree` / `OrPool` / `LogicTreeNet` |
 | **WARP** ([arXiv:2602.03527](https://arxiv.org/abs/2602.03527)) | Walsh–Hadamard gate parameterization (4 params/node vs 16) + stochastic smoothing → `WARPLayer` / `WARPNet` / `WARPNetN` |
-
-Plus two extra node types: k-input LUTs (`LUTkLayer`) and an attention-like
-pairwise-logic layer (`PairLogicLayer`).
+| **BitLogic** ([arXiv:2602.07400](https://arxiv.org/abs/2602.07400)) | n-input LUT nodes with selectable boundary-consistent relaxations (`multilinear`/`hybrid`/`linear`/`polynomial`) + learned thermometer encoding → `LUTNodeLayer` / `LUTkLayer` / `LearnedThermometerEncoder` |
 
 Optional **fused Triton CUDA kernels** accelerate the FC, convolutional, and
 WARP layers; the library transparently falls back to pure PyTorch when
@@ -95,22 +93,67 @@ deployable Boolean circuit). Measured with the default configs:
 > FashionMNIST one the two biggest levers are **edge-detector input channels**
 > and a **low GroupSum `tau`** (high `tau` starves the conv gates of gradient).
 
+## Architecture
+
+Every model composes three small registries, so the node families that used to
+be separate classes are now one parametrizable layer:
+
+| Registry | Module | Choices |
+|---|---|---|
+| **node** (gate/LUT parameterization) | `silogic.nodes` | `gate16`, `walsh`, `multilinear`, `hybrid`, `linear`, `polynomial` |
+| **connectome** (input wiring) | `silogic.connectomes` | `topk`, `blocktopk`, `fixed`, `dense`, `st`, `stw`, `stt` |
+| **decoder** (head) | `silogic.heads` | `groupsum`, `linear`, `linfull`, `sumlinear`, `ternary` |
+
+```python
+import silogic
+
+# One layer, any parameterization + wiring:
+layer = silogic.LogicLayer(256, 512, node="walsh", connectome="topk", arity=2)
+
+# One network builder over any node/connectome/decoder:
+net = silogic.LogicNet(784, 2000, depth=4, node="multilinear", arity=4,
+                       connectome="topk", decoder="groupsum")
+```
+
+The **convolutional** side takes the same `node=` registry. Each output channel
+is a `node`-arity *tree* of depth `tree_depth`: the 2-input families (`gate16`,
+`walsh`) use 2-input gates (default depth 2), the n-input families
+(`multilinear`/`hybrid`/`linear`/`polynomial`) use `arity`-input LUT nodes
+(default depth 1 = one LUT per channel, or deeper for a tree of LUTs):
+
+```python
+# A convolutional net with multilinear (LUT-k) conv nodes:
+cnet = silogic.LogicConvNet(3, 32, channels=[128, 256], head_widths=[1280],
+                            node="multilinear", arity=4, connect="topk")
+```
+
+Fused Triton kernels live in `silogic.kernels` (optional; CPU import works without
+them) — the dense `gate16` head, the `gate16` conv tree, the Walsh (`walsh`) layer,
+the n-input `hybrid` LUT layer (DWN straight-through), and the convolutional
+`hybrid` LUT-tree of any depth (image-reading, no unfold). Shared gate algebra and
+straight-through estimators are in `silogic.functional`. Train/inference-alignment
+tricks are **constructor arguments**, not globals — `gate_select`
+(`"softmax"`/`"gumbel"`/`"hard"`, and a per-layer list on `LogicNet` so a network
+can mix soft and hard gates), `gumbel_tau`, `decoder_ste`, `use_triton`.
+
 ## Public API
 
 ```python
 import silogic
 
-# Fully-connected logic network
+# Fully-connected logic network (generic builder + the unified layer)
 silogic.LogicLayer, silogic.LogicNet, silogic.GroupSum
 
-# Convolutional logic-gate trees
-silogic.ConvLogicTree, silogic.OrPool, silogic.LogicTreeNet
+# Convolutional logic-gate trees (the spatial mirror of LogicLayer / LogicNet)
+silogic.ConvLogicTree, silogic.ConvLogicLayer, silogic.OrPool   # layer
+silogic.LogicConvNet, silogic.LogicTreeNet                      # network
 
-# WARP (Walsh–Hadamard) networks, arity 2 and general n
+# Named presets (thin wrappers over LogicLayer / LogicNet)
 silogic.WARPLayer, silogic.WARPNet, silogic.WARPLayerN, silogic.WARPNetN
+silogic.LUTkLayer, silogic.LUTkNet, silogic.LUTNodeLayer, silogic.LUTNodeNet
 
-# Alternative node types
-silogic.LUTkLayer, silogic.LUTkNet, silogic.PairLogicLayer, silogic.PairLogicNet
+# Registries (build any variant by name)
+silogic.build_node, silogic.build_connectome, silogic.build_decoder
 
 # Training / evaluation
 silogic.train_model, silogic.eval_soft, silogic.eval_hard

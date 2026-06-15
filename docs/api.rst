@@ -19,11 +19,11 @@ Boolean circuit).
    :nosignatures:
 
    LogicNet
+   LogicConvNet
    LogicTreeNet
    WARPNet
    WARPNetN
    LUTkNet
-   PairLogicNet
    LUTNodeNet
 
 Layers
@@ -37,12 +37,12 @@ The building blocks — individual logic-gate layers and the classification head
 
    LogicLayer
    ConvLogicTree
+   ConvLogicLayer
    OrPool
    GroupSum
    WARPLayer
    WARPLayerN
    LUTkLayer
-   PairLogicLayer
    LUTNodeLayer
    LearnedThermometerEncoder
 

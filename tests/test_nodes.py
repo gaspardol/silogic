@@ -2,7 +2,7 @@
 import pytest
 import torch
 
-from silogic import LUTkLayer, LUTkNet, PairLogicLayer, PairLogicNet
+from silogic import LUTkLayer, LUTkNet
 from conftest import random_bits
 
 
@@ -40,31 +40,3 @@ def test_lutk_net():
     assert net(x).shape == (8, 10)
     assert net.forward_hard(x).shape == (8, 10)
     assert net.num_luts() == 20 * 2
-
-
-# ---- PairLogic (attention-like) ------------------------------------------
-@pytest.mark.parametrize("n_heads", [1, 2])
-def test_pairlogic_forward_and_hard(n_heads):
-    layer = PairLogicLayer(24, 16, n_heads=n_heads, cand_q=8, seed=0)
-    x = random_bits(5, 24)
-    y = layer(x)
-    assert y.shape == (5, 16)
-    # ste_threshold forward value is hard {0,1} (up to float round-off)
-    assert (y.detach() - y.detach().round()).abs().max() < 1e-5
-    h = layer.forward_hard(x)
-    assert set(h.unique().tolist()).issubset({0., 1.})
-    assert layer.fpga_cost() == 16 * n_heads * 24
-
-
-def test_pairlogic_gradient_flows():
-    layer = PairLogicLayer(24, 16, n_heads=2, seed=1)
-    x = random_bits(8, 24)
-    layer(x).sum().backward()
-    assert layer.gate.grad is not None and layer.gate.grad.abs().sum() > 0
-
-
-def test_pairlogic_net():
-    net = PairLogicNet(40, 20, 2, n_heads=2, seed=0)
-    x = random_bits(8, 40)
-    assert net(x).shape == (8, 10)
-    assert net.forward_hard(x).shape == (8, 10)

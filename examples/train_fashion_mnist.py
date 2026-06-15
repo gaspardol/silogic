@@ -19,20 +19,21 @@ For a simpler (lower-accuracy) fully-connected baseline, see how MNIST is done i
 train_mnist.py and swap the dataset to "fmnist" with SEVEN_THRESH.
 """
 import argparse
+from silogic.models import LogicConvNet
 import torch
 
-from silogic import LogicTreeNet, get_fmnist_spatial, train_model, FIVE_THRESH
+from silogic import get_fmnist_spatial, train_model, FIVE_THRESH
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--channels", type=int, nargs="+", default=[192, 384],
+    p.add_argument("--channels", type=int, nargs="+", default=[64, 128],
                    help="conv logic-tree channels per block (each halves H,W)")
-    p.add_argument("--tree-depth", type=int, default=3)
+    p.add_argument("--tree-depth", type=int, default=1)
     p.add_argument("--k", type=int, default=4, help="Top-K leaf candidates")
-    p.add_argument("--n-chan", type=int, default=3,
+    p.add_argument("--n-chan", type=int, default=4,
                    help="input channels each tree may observe")
-    p.add_argument("--head-width", type=int, default=2560)
+    p.add_argument("--head-width", type=int, default=4*2560)
     p.add_argument("--head-k", type=int, default=8)
     p.add_argument("--tau", type=float, default=10.0, help="GroupSum temperature")
     p.add_argument("--no-edges", dest="edges", action="store_false",
@@ -55,11 +56,12 @@ def main():
         download=args.download)
     print(f"  channels={ch}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
-    net = LogicTreeNet(in_channels=ch, in_hw=28, channels=args.channels,
+    net = LogicConvNet(in_channels=ch, in_hw=28, channels=args.channels,
+                       node="hybrid", arity=4, connect="topk",
                        head_widths=[args.head_width], num_classes=10,
                        tree_depth=args.tree_depth, k=args.k, n_chan=args.n_chan,
                        head_k=args.head_k, tau=args.tau, seed=0)
-    print(f"Model: LogicTreeNet channels={args.channels} "
+    print(f"Model: LogicConvNet channels={args.channels} "
           f"head_width={args.head_width} gates={net.gate_count(28):,}")
 
     # cosine LR + AdamW; eager (the conv path mixes unfold + custom kernels).

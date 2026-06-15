@@ -22,7 +22,7 @@ import torch
 import triton
 import triton.language as tl  # noqa: F401  (used inside generated source)
 
-from .triton_conv import _tree_structure, _refname, _BLOCK, _WARPS
+from .conv import _tree_structure, _refname, _BLOCK, _WARPS
 
 _KERNEL_DIR = os.path.join(tempfile.gettempdir(), "silogic_treeconv_topk")
 os.makedirs(_KERNEL_DIR, exist_ok=True)

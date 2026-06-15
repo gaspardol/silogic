@@ -3,7 +3,6 @@ import math
 import pytest
 import torch
 
-import silogic.warp as W
 from silogic import WARPLayer, WARPNet, WARPLayerN, WARPNetN
 from conftest import random_bits
 
@@ -75,10 +74,6 @@ def test_warpnet_arity(arity):
 
 
 def test_warp_gumbel_smoothing_runs():
-    W.WARP_GUMBEL["enabled"] = True
-    try:
-        net = WARPNet(64, 40, 2, tau=0.5, seed=0)
-        net.train()
-        net((random_bits(8, 64))).sum().backward()
-    finally:
-        W.WARP_GUMBEL["enabled"] = False
+    net = WARPNet(64, 40, 2, tau=0.5, seed=0, gate_select="gumbel")
+    net.train()
+    net((random_bits(8, 64))).sum().backward()

@@ -110,8 +110,8 @@ WARP parameterizes each gate by its **Walsh–Hadamard coefficients** rather tha
 general **arity `n`** — each node is then a full `2^n`-entry LUT.
 
 ```{warning}
-Higher arity is more expressive but widens the soft→hard gap. Turn on
-{data}`~silogic.WARP_GUMBEL` (stochastic Gumbel-sigmoid smoothing) and use
+Higher arity is more expressive but widens the soft→hard gap. Pass
+`gate_select="gumbel"` (stochastic Gumbel-sigmoid smoothing) and use
 `residual_p > 0` (residual init) to keep the hard circuit aligned. See
 `examples/train_mnist_warp.py`.
 ```
@@ -121,10 +121,6 @@ Higher arity is more expressive but widens the soft→hard gap. Turn on
 - {class}`~silogic.LUTkLayer` / {class}`~silogic.LUTkNet` — *k*-input lookup-table
   nodes, the FPGA-native primitive (one `LUT_k` per node, `2^k` learnable entries),
   differentiable via multilinear interpolation over the input hypercube.
-- {class}`~silogic.PairLogicLayer` / {class}`~silogic.PairLogicNet` — an
-  attention-like layer where the query×key dot product is replaced by a learnable
-  logic gate; the multilinear gate factorizes, so the `O(in·out)` pairwise tensor
-  is never materialized.
 - {class}`~silogic.LUTNodeLayer` / {class}`~silogic.LUTNodeNet` — a **unified**
   n-input LUT-node layer (BitLogic-style) with a selectable `relaxation`: a full
   truth table evaluated as the multilinear `"probabilistic"` expectation, a
@@ -191,30 +187,33 @@ Threshold presets are exported for convenience: `MNIST_THRESH` (`[0.25]`),
   `(s>0)∈{0,1}`, backward the sigmoid gradient).
 - {func}`~silogic.sign_ste` / {func}`~silogic.ternary_ste` — binarize / ternarize
   weights to `{-1,+1}` / `{-1,0,+1}` with a straight-through gradient.
-- {func}`~silogic.gate_probs` — per-gate selection weights, honoring the global
-  toggles below.
+- {func}`~silogic.gate_probs` — per-gate selection weights for the `gate_select`
+  argument below.
 
-## Global toggles
+## Train/inference-alignment options
 
-These module-level dicts switch train/inference-alignment tricks on globally; set
-them before the forward pass (library code restores them afterwards).
+These are **constructor arguments** (not global state), so different layers in one
+network can use different settings — e.g. soft early layers and hard late layers.
 
 ```{list-table}
 :header-rows: 1
 :widths: 30 70
 
-* - Toggle
+* - Argument
   - Effect
-* - `silogic.GUMBEL`
-  - `{"enabled", "tau"}` — Gumbel straight-through gate selection (hard argmax
-    forward, soft Gumbel-softmax gradient) for `LogicLayer`/`ConvLogicTree`; aligns
-    train and inference. Incompatible with residual *init* on deep conv nets.
-* - `silogic.HARD_GATE`
-  - `{"enabled"}` — deterministic hard-gate STE (argmax one-hot forward, softmax
-    gradient); the noise-free counterpart to `GUMBEL`.
-* - `silogic.WARP_GUMBEL`
-  - `{"enabled"}` — Gumbel-sigmoid stochastic smoothing for the WARP layers.
-* - `silogic.model.DEC_FEATURE_STE`
-  - STE-binarize logic activations before the learned decoders so their summed input
-    matches inference.
+* - `gate_select`
+  - On `LogicLayer`/`LogicNet`/`ConvLogicTree`/`LogicConvNet` (and `WARP*`):
+    `"softmax"` (default), `"gumbel"` (hard argmax forward + Gumbel-softmax
+    gradient; Gumbel-sigmoid smoothing for WARP), or `"hard"` (deterministic argmax
+    one-hot forward + softmax gradient). On `LogicNet` it also accepts a **per-layer
+    list**, e.g. `gate_select=["softmax", "softmax", "hard"]`.
+* - `gumbel_tau`
+  - Temperature for `gate_select="gumbel"` (default `1.0`).
+* - `decoder_ste`
+  - On `LogicNet`/`LogicConvNet` (→ `LearnedDecoder(feature_ste=...)`): STE-binarize
+    logic activations before the learned decoders so their summed input matches
+    inference. Default `True`.
+* - `use_triton`
+  - On `LogicLayer`/`LogicNet`: use the fused Triton kernels when available
+    (default `True`); set `False` to force the pure-PyTorch path.
 ```

@@ -25,16 +25,16 @@ from silogic import LogicNet, get_dataset_cached, train_model, MNIST_THRESH
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--width", type=int, default=10000)
-    p.add_argument("--depth", type=int, default=6)
+    p.add_argument("--width", type=int, default=4000)
+    p.add_argument("--depth", type=int, default=2)
     p.add_argument("--k", type=int, default=8, help="Top-K candidates per input")
     p.add_argument("--tau", type=float, default=10.0, help="GroupSum temperature")
     p.add_argument("--epochs", type=int, default=25)
     p.add_argument("--batch-size", type=int, default=256)
-    p.add_argument("--lr", type=float, default=0.05)
+    p.add_argument("--lr", type=float, default=0.01)
     p.add_argument("--no-augment", dest="augment", action="store_false",
                    help="disable affine+elastic x10 augmentation (faster, ~96%% hard)")
-    p.set_defaults(augment=True)
+    p.set_defaults(augment=False)
     p.add_argument("--no-compile", action="store_true")
     p.add_argument("--download", action="store_true",
                    help="download the dataset via torchvision if not already present")
@@ -48,15 +48,15 @@ def main():
         download=args.download)
     print(f"  in_dim={in_dim}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
-    net = LogicNet(in_dim, args.width, args.depth, num_classes=10,
-                   connectome="F", k=args.k, tau=args.tau, seed=0)
+    net = LogicNet(in_dim, args.width, args.depth, num_classes=10, node = "hybrid",
+                   arity = 4, connectome="topK", k=args.k, tau=args.tau, seed=0)
     print(f"Model: LogicNet width={args.width} depth={args.depth} "
           f"gates={net.num_gates():,}")
 
     out = train_model(net, Xtr, ytr, Xte, yte, args.device,
                       epochs=args.epochs, bs=args.batch_size, lr=args.lr,
                       val_every=max(1, args.epochs // 10),
-                      compile_=not args.no_compile)
+                      compile_= not args.no_compile)
     print(f"\nMNIST done in {out['train_min']:.1f} min  "
           f"soft {out['test_soft']:.2f}%  hard {out['test_hard']:.2f}%")
 

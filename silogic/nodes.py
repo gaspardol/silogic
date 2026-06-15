@@ -1,199 +1,295 @@
-"""Unified differentiable LUT-node layer with multiple relaxations.
+"""Unified differentiable logic-node parameterizations.
 
-Following BitLogic (Bührer et al., arXiv:2602.07400), a *LUT node* is an n-input
-Boolean function trained through a differentiable surrogate ``f`` and discretized
-to an exact truth table for inference. The same node can be parameterized many
-ways; this layer implements a registry of **boundary-consistent** relaxations
-(``f`` recovers the hard LUT at the cube corners), selectable by ``relaxation``:
+Every "logic node" maps selected operands ``[B, out, arity]`` (relaxed Booleans
+in ``[0, 1]``) to one relaxed Boolean per node ``[B, out]``, and discretizes to an
+exact truth table for inference (``forward_hard``). The library previously had
+six *separate* implementations of this idea scattered across files; this module
+collects them into one registry of **boundary-consistent** parameterizations
+(``f`` recovers the hard LUT at the cube corners), selectable by name:
 
-  * ``"probabilistic"`` — multilinear expectation over the input hypercube,
-    ``f = sum_a sigmoid(theta_a) * prod_j a_j^{a_j}(1-a_j)^{1-a_j}`` (one logit per
-    truth-table entry; the same form as :class:`~silogic.LUTkLayer`).
-  * ``"hybrid"`` — DWN-style: the **discrete** forward ``sigmoid(theta)[idx(H(a))]``
-    (hard-thresholded inputs, so the forward equals inference) with the
-    probabilistic surrogate **gradient** (smooth backprop).
-  * ``"linear"`` — LogicNets-style perceptron node ``sigmoid(theta0 + sum_j theta_j a_j)``
-    (O(n) params; only linearly-separable functions).
-  * ``"polynomial"`` — degree-``d`` multilinear polynomial
-    ``sigmoid(sum_{|S|<=d} theta_S prod_{j in S} a_j)`` (O(n^d) params, implicit
-    regularization for d < n).
+  * ``"gate16"``      — softmax mixture over the 16 two-input Boolean functions,
+    evaluated via BasisProj (``{1,A,B,A*B}``) or FullEval. Arity 2. (LILogic / DLGN)
+  * ``"walsh"``       — Walsh-Hadamard coefficients ``theta in R^(2^arity)``,
+    ``f = sigmoid(z/tau)``. Arity 2 (4 params) or n. (WARP, arXiv:2602.03527)
+  * ``"multilinear"`` — one logit per truth-table entry, multilinear interpolation
+    over the hypercube (the k-input generalization of BasisProj). Arity n.
+    Equivalent to an FPGA LUT_k. (was ``LUTkLayer`` / the ``"probabilistic"`` relax.)
+  * ``"hybrid"``      — DWN-style: discrete forward (hard-thresholded operands) with
+    the multilinear surrogate gradient. Arity n.
+  * ``"linear"``      — perceptron node ``sigmoid(theta0 + sum_j theta_j a_j)``. Arity n.
+  * ``"polynomial"``  — degree-``d`` multilinear polynomial. Arity n.
 
-All variants share LILogic Top-K input selection (``k`` learnable candidates per
-input slot) and a node-family-agnostic residual initialization (``residual_p``).
+All nodes share :meth:`Node.residual_init` (bias toward passing through the first
+input), replacing the three ad-hoc residual inits that lived in ``model``/``warp``/
+the old ``nodes`` module.
 """
-import math
 from itertools import combinations
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .model import GroupSum
+from .functional import (BASIS_COEFFS, TRUTH_TABLES, GATE_A, gate_probs,
+                         residual_logit, corner_bits, walsh_monomials)
 
-RELAXATIONS = ("probabilistic", "hybrid", "linear", "polynomial")
+# node registry + legacy relaxation aliases
+NODES = ("gate16", "walsh", "multilinear", "hybrid", "linear", "polynomial")
+RELAXATIONS = ("probabilistic", "hybrid", "linear", "polynomial")  # LUTNodeLayer names
+_NODE_ALIASES = {
+    "gate16": "gate16", "gate": "gate16",
+    "walsh": "walsh",
+    "multilinear": "multilinear", "probabilistic": "multilinear",
+    "hybrid": "hybrid", "linear": "linear", "polynomial": "polynomial",
+}
 
 
-def residual_logit(p, tau=1.0):
-    """Logit that makes ``sigmoid`` output probability ``p`` (used for residual init)."""
-    p = min(max(float(p), 1e-4), 1 - 1e-4)
-    return tau * math.log(p / (1 - p))
+def _gumbel(shape, device):
+    u = torch.rand(shape, device=device).clamp_(1e-6, 1 - 1e-6)
+    return -torch.log(-torch.log(u))
 
 
-class LUTNodeLayer(nn.Module):
-    """A layer of n-input LUT nodes with a selectable differentiable relaxation.
+class Node(nn.Module):
+    """Base class: ``forward``/``forward_hard`` take operands ``[B, out, arity]``."""
 
-    Args:
-        in_dim (int): Number of input features.
-        out_dim (int): Number of LUT nodes (outputs).
-        arity (int): Inputs per node ``n``. Default ``4``.
-        relaxation (str): Node parameterization; one of ``"probabilistic"``,
-            ``"hybrid"``, ``"linear"``, ``"polynomial"``. Default ``"probabilistic"``.
-        k (int): Top-K learnable candidates per input slot. Default ``8``.
-        degree (int, optional): Polynomial degree for ``relaxation="polynomial"``
-            (``None`` -> ``min(2, arity)``). Ignored otherwise.
-        residual_p (float): If ``> 0``, residual-initialize each node toward
-            passing through its first input with this probability (a node-agnostic
-            noisy identity). ``0.0`` disables it. Default ``0.0``.
-        seed (int, optional): RNG seed for the candidate wiring / init.
-    """
-
-    def __init__(self, in_dim, out_dim, arity=4, relaxation="probabilistic",
-                 k=8, degree=None, residual_p=0.0, seed=None):
+    def __init__(self, out_dim, arity):
         super().__init__()
-        if relaxation not in RELAXATIONS:
-            raise ValueError(f"unknown relaxation {relaxation!r}; choose from {RELAXATIONS}")
-        self.in_dim = in_dim
         self.out_dim = out_dim
-        self.n = arity
-        self.relaxation = relaxation
-        gen = torch.Generator().manual_seed(seed) if seed is not None else None
+        self.arity = arity
 
-        kk = min(k, in_dim)
-        self.k = kk
-        cand = torch.stack([torch.stack([torch.randperm(in_dim, generator=gen)[:kk]
-                                         for _ in range(arity)]) for _ in range(out_dim)])
-        self.register_buffer("cand", cand)               # [out, n, k]
-        self.conn = nn.Parameter(torch.randn(out_dim, arity, kk, generator=gen))
+    def residual_init(self, p):    # overridden per family
+        raise NotImplementedError
 
-        if relaxation in ("probabilistic", "hybrid"):
-            P = 2 ** arity
-            bits = torch.tensor([[(p >> j) & 1 for j in range(arity)] for p in range(P)],
-                                dtype=torch.float32)
-            self.register_buffer("corners", bits)        # [P, n]
-            self.theta = nn.Parameter(torch.randn(out_dim, P) * 0.1)
-        elif relaxation == "linear":
-            self.theta = nn.Parameter(torch.randn(out_dim, arity + 1) * 0.1)  # [bias, w1..wn]
-        else:  # polynomial
-            d = min(2, arity) if degree is None else min(degree, arity)
-            self.degree = d
-            subs = [()]
-            for r in range(1, d + 1):
-                subs += list(combinations(range(arity), r))
-            self._subs = subs
-            mask = torch.zeros(len(subs), arity)
-            for i, s in enumerate(subs):
-                for j in s:
-                    mask[i, j] = 1.0
-            self.register_buffer("mono_mask", mask)       # [M, n]
-            self.theta = nn.Parameter(torch.randn(out_dim, len(subs)) * 0.1)
 
-        if residual_p > 0:
-            self._init_residual(residual_p)
+# ---------------------------------------------------------------------------
+class Gate16Node(Node):
+    """Softmax mixture over the 16 two-input Boolean functions (arity 2)."""
+
+    def __init__(self, out_dim, arity=2, gate_eval="basis",
+                 gate_select="softmax", gumbel_tau=1.0):
+        super().__init__(out_dim, 2)
+        assert arity == 2, "gate16 nodes are two-input"
+        self.gate_eval = gate_eval
+        self.gate_select = gate_select
+        self.gumbel_tau = gumbel_tau
+        self.gate_logits = nn.Parameter(torch.randn(out_dim, 16) * 0.1)
+        self.register_buffer("basis", BASIS_COEFFS.clone())
+        self.register_buffer("truth", TRUTH_TABLES.clone())
+
+    def _probs(self):
+        return gate_probs(self.gate_logits, self.training, dim=1,
+                          gate_select=self.gate_select, gumbel_tau=self.gumbel_tau)
+
+    def coef(self):
+        """BasisProj coefficients ``[out, 4]`` (for the fused Triton path)."""
+        return self._probs() @ self.basis
+
+    def forward(self, operands):
+        a, b = operands[..., 0], operands[..., 1]
+        p = self._probs()                                            # [out, 16]
+        if self.gate_eval == "basis":
+            c = p @ self.basis                                       # [out, 4]
+            return c[:, 0] + c[:, 1] * a + c[:, 2] * b + c[:, 3] * (a * b)
+        ab = a * b
+        funcs = torch.stack([
+            torch.zeros_like(a), ab, a - ab, a, b - ab, b, a + b - 2 * ab,
+            a + b - ab, 1 - a - b + ab, 1 - a - b + 2 * ab, 1 - b, 1 - b + ab,
+            1 - a, 1 - a + ab, 1 - ab, torch.ones_like(a),
+        ], dim=0)                                                    # [16, B, out]
+        return torch.einsum("ibo,oi->bo", funcs, p)
 
     @torch.no_grad()
-    def _init_residual(self, p):
-        c = residual_logit(p)
-        if self.relaxation in ("probabilistic", "hybrid"):
-            # node ~ first input: theta_pattern = +c if bit0==1 else -c, + noise
-            bit0 = self.corners[:, 0]                     # [P]
-            self.theta.copy_((2 * bit0 - 1) * c + 0.1 * torch.randn_like(self.theta))
-        elif self.relaxation == "linear":
-            self.theta.zero_()
-            self.theta[:, 1] = c                          # weight on first input
-            self.theta[:, 0] = -c / 2                     # compensating bias
-        else:  # polynomial
-            self.theta.zero_()
-            self.theta[:, self._subs.index(())] = -c / 2
-            self.theta[:, self._subs.index((0,))] = c
+    def forward_hard(self, operands):
+        a, b = operands[..., 0], operands[..., 1]
+        gate = self.gate_logits.argmax(dim=1)                        # [out]
+        idx = (a.long() << 1) | b.long()                             # [B, out] in 0..3
+        tt = self.truth.to(operands.device)[gate]                    # [out, 4]
+        return torch.gather(tt, 1, idx.t()).t().to(torch.uint8)
 
-    # -- input selection (Top-K) -------------------------------------------
-    def _select_soft(self, x):
-        w = F.softmax(self.conn, dim=2)                  # [out, n, k]
-        g = x[:, self.cand]                              # [B, out, n, k]
-        return torch.einsum("bonk,onk->bon", g, w)       # [B, out, n]
+    @torch.no_grad()
+    def residual_init(self, p):
+        self.gate_logits.normal_(0, 0.1)
+        self.gate_logits[:, GATE_A] = residual_logit(p)              # bias toward 'A'
 
-    def _select_hard(self, x):
-        sel = torch.gather(self.cand, 2, self.conn.argmax(2, keepdim=True)).squeeze(2)
-        return x[:, sel]                                 # [B, out, n]
 
-    # -- relaxation forward f(a) -> [B, out] in [0,1] ----------------------
+# ---------------------------------------------------------------------------
+class WalshNode(Node):
+    """Walsh-Hadamard node: ``z = sum_i theta_i * monomial_i(2a-1)``,
+    ``f = sigmoid(z / tau)``. Arity 2 (4 params) or n (``2**arity``)."""
+
+    def __init__(self, out_dim, arity=2, tau=1.0, gate_select="softmax"):
+        super().__init__(out_dim, arity)
+        self.tau = tau
+        self.gate_select = gate_select          # "gumbel" -> Gumbel-sigmoid smoothing
+        self.theta = nn.Parameter(torch.randn(out_dim, 2 ** arity) * 0.1)
+
+    @property
+    def inv_tau(self):
+        return 1.0 / self.tau
+
+    def _z(self, *operands_ab):
+        """z for given per-slot soft values (arity 2 convenience: ``_z(a, b)``)."""
+        u = [2 * v - 1 for v in operands_ab]
+        if self.arity == 2:
+            t = self.theta
+            return t[:, 0] + t[:, 1] * u[0] + t[:, 2] * u[1] + t[:, 3] * (u[0] * u[1])
+        um = torch.stack(u, dim=2)                                   # [B, out, n]
+        return (walsh_monomials(um) * self.theta[None]).sum(2)
+
+    def coef(self):
+        """Arity-2 BasisProj coeffs ``[out, 4]`` in ``(a, b)`` space (fused path)."""
+        t = self.theta
+        return torch.stack([t[:, 0] - t[:, 1] - t[:, 2] + t[:, 3],
+                            2 * (t[:, 1] - t[:, 3]), 2 * (t[:, 2] - t[:, 3]),
+                            4 * t[:, 3]], dim=1)
+
+    def forward(self, operands):
+        u = 2 * operands - 1                                         # [B, out, arity]
+        z = (walsh_monomials(u) * self.theta[None]).sum(2)
+        if self.gate_select == "gumbel" and self.training:           # Gumbel-sigmoid
+            z = z + _gumbel(z.shape, z.device) - _gumbel(z.shape, z.device)
+        return torch.sigmoid(z * self.inv_tau)
+
+    @torch.no_grad()
+    def forward_hard(self, operands):
+        u = 2 * operands.float() - 1                                 # uint8-safe
+        z = (walsh_monomials(u) * self.theta[None]).sum(2)
+        return (z > 0).to(torch.uint8)
+
+    @torch.no_grad()
+    def residual_init(self, p):
+        self.theta.zero_()
+        self.theta[:, 2 ** (self.arity - 1)] = residual_logit(p, self.tau)  # pass last input
+
+
+# ---------------------------------------------------------------------------
+class MultilinearNode(Node):
+    """One logit per truth-table entry; multilinear interpolation (arity n).
+    Equivalent to an FPGA LUT_k (was ``LUTkLayer`` / the ``probabilistic`` relax.)."""
+
+    def __init__(self, out_dim, arity=2):
+        super().__init__(out_dim, arity)
+        self.register_buffer("corners", corner_bits(arity))          # [P, n]
+        self.logits = nn.Parameter(torch.randn(out_dim, 2 ** arity) * 0.1)
+
     def _f(self, a):
-        if self.relaxation in ("probabilistic", "hybrid"):
-            au = a.unsqueeze(2)                          # [B, out, 1, n]
-            c = self.corners.view(1, 1, -1, self.n)      # [1, 1, P, n]
-            prod = (c * au + (1 - c) * (1 - au)).prod(3)  # [B, out, P]
-            return (prod * torch.sigmoid(self.theta)[None]).sum(2)
-        if self.relaxation == "linear":
-            z = self.theta[None, :, 0] + torch.einsum("bon,on->bo", a, self.theta[:, 1:])
-            return torch.sigmoid(z)
-        # polynomial
-        au = a.unsqueeze(2)                              # [B, out, 1, n]
-        mk = self.mono_mask.view(1, 1, -1, self.n)       # [1, 1, M, n]
-        mono = (au * mk + (1 - mk)).prod(3)              # [B, out, M]
-        return torch.sigmoid((mono * self.theta[None]).sum(2))
+        au = a.unsqueeze(2)                                          # [B, out, 1, n]
+        c = self.corners.view(1, 1, -1, self.arity)                 # [1, 1, P, n]
+        prod = (c * au + (1 - c) * (1 - au)).prod(3)                 # [B, out, P]
+        return (prod * torch.sigmoid(self.logits)[None]).sum(2)
 
-    def forward(self, x):
-        a = self._select_soft(x)
-        f_soft = self._f(a)
-        if self.relaxation == "hybrid":
-            with torch.no_grad():
-                f_disc = self._f((a >= 0.5).float())     # discrete forward
-            return f_disc + f_soft - f_soft.detach()     # ...soft gradient (STE)
-        return f_soft
+    def forward(self, operands):
+        return self._f(operands)
 
     @torch.no_grad()
-    def forward_hard(self, x):
-        a = self._select_hard(x.float())                 # [B, out, n] in {0,1}
-        return (self._f(a) >= 0.5).to(torch.uint8)       # boundary-consistent
-
-
-class LUTNodeNet(nn.Module):
-    """Stack of :class:`LUTNodeLayer`s + a :class:`~silogic.GroupSum` head.
-
-    Args:
-        in_dim (int): Number of binary input features.
-        width (int): Nodes per layer; must be divisible by ``num_classes``.
-        depth (int): Number of stacked layers.
-        arity (int): Inputs per node. Default ``4``.
-        relaxation (str): Node relaxation (see :class:`LUTNodeLayer`). Default
-            ``"probabilistic"``.
-        num_classes (int): Output classes. Default ``10``.
-        k (int): Top-K candidates per input slot. Default ``8``.
-        tau (float): GroupSum temperature. Default ``10.0``.
-        residual_p (float): Residual-init probability. Default ``0.0``.
-        seed (int): Base RNG seed; layer ``i`` uses ``seed*1000+i``. Default ``0``.
-    """
-
-    def __init__(self, in_dim, width, depth, arity=4, relaxation="probabilistic",
-                 num_classes=10, k=8, tau=10.0, residual_p=0.0, seed=0):
-        super().__init__()
-        assert width % num_classes == 0
-        layers = []
-        d = in_dim
-        for i in range(depth):
-            layers.append(LUTNodeLayer(d, width, arity=arity, relaxation=relaxation,
-                                       k=k, residual_p=residual_p, seed=seed * 1000 + i))
-            d = width
-        self.layers = nn.ModuleList(layers)
-        self.head = GroupSum(num_classes, tau=tau)
-
-    def forward(self, x):
-        for l in self.layers:
-            x = l(x)
-        return self.head(x)
+    def forward_hard(self, operands):
+        a = operands.long()                                          # [B, out, n] bits
+        shifts = (2 ** torch.arange(self.arity, device=a.device)).view(1, 1, -1)
+        addr = (a * shifts).sum(dim=2)                               # [B, out]
+        tt = (self.logits > 0).to(torch.uint8)                      # [out, P]
+        return torch.gather(tt, 1, addr.t()).t()
 
     @torch.no_grad()
-    def forward_hard(self, x):
-        for l in self.layers:
-            x = l.forward_hard(x)
-        return self.head.forward_hard(x)
+    def residual_init(self, p):
+        c = residual_logit(p)
+        bit0 = self.corners[:, 0]                                    # [P]
+        self.logits.copy_((2 * bit0 - 1) * c + 0.1 * torch.randn_like(self.logits))
+
+
+class HybridNode(MultilinearNode):
+    """DWN-style: discrete forward (hard-thresholded operands) with the
+    multilinear surrogate gradient (straight-through)."""
+
+    def forward(self, operands):
+        f_soft = self._f(operands)
+        with torch.no_grad():
+            f_disc = self._f((operands >= 0.5).float())
+        return f_disc + f_soft - f_soft.detach()
+
+
+# ---------------------------------------------------------------------------
+class LinearNode(Node):
+    """Perceptron node ``sigmoid(theta0 + sum_j theta_j a_j)`` (arity n)."""
+
+    def __init__(self, out_dim, arity=2):
+        super().__init__(out_dim, arity)
+        self.theta = nn.Parameter(torch.randn(out_dim, arity + 1) * 0.1)  # [bias, w...]
+
+    def _z(self, a):
+        return self.theta[None, :, 0] + torch.einsum("boa,oa->bo", a, self.theta[:, 1:])
+
+    def forward(self, operands):
+        return torch.sigmoid(self._z(operands))
+
+    @torch.no_grad()
+    def forward_hard(self, operands):
+        return (self._z(operands.float()) >= 0).to(torch.uint8)
+
+    @torch.no_grad()
+    def residual_init(self, p):
+        c = residual_logit(p)
+        self.theta.zero_()
+        self.theta[:, 1] = c                                         # weight on first input
+        self.theta[:, 0] = -c / 2                                    # compensating bias
+
+
+class PolynomialNode(Node):
+    """Degree-``d`` multilinear polynomial node (arity n)."""
+
+    def __init__(self, out_dim, arity=2, degree=None):
+        super().__init__(out_dim, arity)
+        d = min(2, arity) if degree is None else min(degree, arity)
+        self.degree = d
+        subs = [()]
+        for r in range(1, d + 1):
+            subs += list(combinations(range(arity), r))
+        self._subs = subs
+        mask = torch.zeros(len(subs), arity)
+        for i, s in enumerate(subs):
+            for j in s:
+                mask[i, j] = 1.0
+        self.register_buffer("mono_mask", mask)                      # [M, n]
+        self.theta = nn.Parameter(torch.randn(out_dim, len(subs)) * 0.1)
+
+    def _z(self, a):
+        au = a.unsqueeze(2)                                          # [B, out, 1, n]
+        mk = self.mono_mask.view(1, 1, -1, self.arity)              # [1, 1, M, n]
+        mono = (au * mk + (1 - mk)).prod(3)                          # [B, out, M]
+        return (mono * self.theta[None]).sum(2)
+
+    def forward(self, operands):
+        return torch.sigmoid(self._z(operands))
+
+    @torch.no_grad()
+    def forward_hard(self, operands):
+        return (self._z(operands.float()) >= 0).to(torch.uint8)
+
+    @torch.no_grad()
+    def residual_init(self, p):
+        c = residual_logit(p)
+        self.theta.zero_()
+        self.theta[:, self._subs.index(())] = -c / 2
+        self.theta[:, self._subs.index((0,))] = c
+
+
+_BUILDERS = {
+    "gate16": Gate16Node, "walsh": WalshNode, "multilinear": MultilinearNode,
+    "hybrid": HybridNode, "linear": LinearNode, "polynomial": PolynomialNode,
+}
+
+
+def build_node(name, out_dim, arity=2, **kw):
+    """Construct a node parameterization by name (see module docstring)."""
+    key = _NODE_ALIASES.get(str(name).lower())
+    if key is None:
+        raise ValueError(f"unknown node {name!r}; choose from {NODES}")
+    cls = _BUILDERS[key]
+    if key == "gate16":
+        return cls(out_dim, arity, gate_eval=kw.get("gate_eval", "basis"),
+                   gate_select=kw.get("gate_select", "softmax"),
+                   gumbel_tau=kw.get("gumbel_tau", 1.0))
+    if key == "walsh":
+        return cls(out_dim, arity, tau=kw.get("tau", 1.0),
+                   gate_select=kw.get("gate_select", "softmax"))
+    if key == "polynomial":
+        return cls(out_dim, arity, degree=kw.get("degree"))
+    return cls(out_dim, arity)
