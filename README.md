@@ -82,7 +82,7 @@ deployable Boolean circuit). Measured with the default configs:
 |---|---|---|
 | `train_mnist.py` | FC `LogicNet` (width 10000 × 6) | **~98.1%** |
 | `train_fashion_mnist.py` | conv `LogicTreeNet` (5-thr + edges) | **~87.5%** |
-| `train_cifar10.py` | conv `LogicTreeNet` | scales with config |
+| `train_cifar10.py` | conv `LogicTreeNet` (edges, ~2.8M gates) | **~57%** (~60% soft, ~10 min) |
 | `train_mnist_warp.py` | arity-4 WARP (`WARPNetN`, 2⁴-LUT nodes) | **~86%** |
 
 > MNIST is easy enough for the flat fully-connected `LogicNet`. FashionMNIST and
