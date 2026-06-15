@@ -62,6 +62,10 @@ from .warp import (
 from .lutk import LUTkLayer, LUTkNet
 from .pairlogic import PairLogicLayer, PairLogicNet
 
+# --- unified LUT-node relaxations + learned encoders (BitLogic-style) ------
+from .nodes import LUTNodeLayer, LUTNodeNet, RELAXATIONS, residual_logit
+from .encoders import LearnedThermometerEncoder
+
 # --- training + data ------------------------------------------------------
 from .train import train_model, eval_hard, eval_soft
 from .data import (
@@ -92,6 +96,8 @@ __all__ = [
     "WARPLayer", "WARPNet", "WARPLayerN", "WARPNetN", "WARP_GUMBEL",
     # node types
     "LUTkLayer", "LUTkNet", "PairLogicLayer", "PairLogicNet",
+    "LUTNodeLayer", "LUTNodeNet", "RELAXATIONS", "residual_logit",
+    "LearnedThermometerEncoder",
     # training
     "train_model", "eval_hard", "eval_soft",
     # data

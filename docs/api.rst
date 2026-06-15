@@ -24,6 +24,7 @@ Boolean circuit).
    WARPNetN
    LUTkNet
    PairLogicNet
+   LUTNodeNet
 
 Layers
 ------
@@ -42,6 +43,8 @@ The building blocks — individual logic-gate layers and the classification head
    WARPLayerN
    LUTkLayer
    PairLogicLayer
+   LUTNodeLayer
+   LearnedThermometerEncoder
 
 Training and evaluation
 -----------------------

@@ -125,6 +125,19 @@ Higher arity is more expressive but widens the soft→hard gap. Turn on
   attention-like layer where the query×key dot product is replaced by a learnable
   logic gate; the multilinear gate factorizes, so the `O(in·out)` pairwise tensor
   is never materialized.
+- {class}`~silogic.LUTNodeLayer` / {class}`~silogic.LUTNodeNet` — a **unified**
+  n-input LUT-node layer (BitLogic-style) with a selectable `relaxation`: a full
+  truth table evaluated as the multilinear `"probabilistic"` expectation, a
+  `"hybrid"` node (discrete forward = inference, probabilistic surrogate gradient),
+  a cheap `"linear"` perceptron node, or a degree-`d` `"polynomial"` node. All
+  share Top-K input selection and a node-agnostic `residual_p` identity init.
+
+## Learned encoders
+
+Logic nets need binary inputs (the fixed thermometer encoders are in
+[Data](#data-and-encoding)). {class}`~silogic.LearnedThermometerEncoder` instead
+**learns** its per-feature thresholds jointly with the network (straight-through
+binarization), then freezes them for deployment.
 
 ## Training and evaluation
 
