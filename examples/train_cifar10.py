@@ -41,13 +41,16 @@ def main():
     p.add_argument("--epochs", type=int, default=30)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=0.02)
+    p.add_argument("--download", action="store_true",
+                   help="download the dataset via torchvision if not already present")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
     print(f"Loading CIFAR-10 spatial (3-level thermometer, n_aug={args.n_aug}) ...",
           flush=True)
     Xtr, ytr, Xte, yte, ch = get_cifar_spatial(
-        CIFAR3_THRESH, n_aug=args.n_aug, device=args.device)
+        CIFAR3_THRESH, n_aug=args.n_aug, device=args.device,
+        download=args.download)
     print(f"  channels={ch}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
     net = LogicTreeNet(in_channels=ch, in_hw=32, channels=args.channels,

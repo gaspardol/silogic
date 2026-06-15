@@ -4,8 +4,9 @@ import pytest
 import torch
 
 from silogic import (binarize, binarize_spatial, edge_bits, get_dataset,
+                     get_dataset_cached, get_cifar_spatial, get_fmnist_spatial,
                      MNIST_THRESH, SEVEN_THRESH, FOUR_THRESH, EDGE_THRESH)
-from silogic.data import DATA_ROOT
+from silogic.data import DATA_ROOT, _raw
 
 
 def test_binarize_thermometer():
@@ -47,3 +48,15 @@ def test_get_dataset_mnist_unaugmented():
     assert Xtr.shape == (60000, 784) and Xte.shape == (10000, 784)
     assert Xtr.dtype == torch.uint8
     assert set(Xtr[:100].unique().tolist()).issubset({0, 1})
+
+
+def test_download_param_defaults_to_false():
+    """Every data-loading function must accept download=False by default."""
+    import inspect
+    for fn in (_raw, get_dataset, get_dataset_cached,
+               get_cifar_spatial, get_fmnist_spatial):
+        sig = inspect.signature(fn)
+        assert "download" in sig.parameters, (
+            f"{fn.__name__} missing 'download' parameter")
+        assert sig.parameters["download"].default is False, (
+            f"{fn.__name__} download default should be False")

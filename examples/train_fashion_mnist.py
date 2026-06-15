@@ -42,6 +42,8 @@ def main():
     p.add_argument("--epochs", type=int, default=40)
     p.add_argument("--batch-size", type=int, default=128)
     p.add_argument("--lr", type=float, default=0.02)
+    p.add_argument("--download", action="store_true",
+                   help="download the dataset via torchvision if not already present")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
@@ -49,7 +51,8 @@ def main():
           f"{'edges' if args.edges else 'no edges'}, n_aug={args.n_aug}) ...",
           flush=True)
     Xtr, ytr, Xte, yte, ch = get_fmnist_spatial(
-        FIVE_THRESH, n_aug=args.n_aug, device=args.device, edges=args.edges)
+        FIVE_THRESH, n_aug=args.n_aug, device=args.device, edges=args.edges,
+        download=args.download)
     print(f"  channels={ch}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
     net = LogicTreeNet(in_channels=ch, in_hw=28, channels=args.channels,

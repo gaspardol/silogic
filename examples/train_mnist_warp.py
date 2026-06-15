@@ -42,13 +42,16 @@ def main():
     p.add_argument("--lr", type=float, default=0.02)
     p.add_argument("--augment", action="store_true",
                    help="affine+elastic x10 (slower, higher acc)")
+    p.add_argument("--download", action="store_true",
+                   help="download the dataset via torchvision if not already present")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
     print(f"Loading MNIST (augment={args.augment}) ...", flush=True)
     Xtr, ytr, Xte, yte, in_dim = get_dataset_cached(
         "mnist", MNIST_THRESH, augment=args.augment,
-        n_aug=10 if args.augment else 1, device=args.device)
+        n_aug=10 if args.augment else 1, device=args.device,
+        download=args.download)
     print(f"  in_dim={in_dim}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
     net = WARPNetN(in_dim, args.width, args.depth, arity=args.arity, num_classes=10,
