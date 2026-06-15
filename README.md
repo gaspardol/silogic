@@ -69,7 +69,6 @@ python examples/train_mnist.py            # FC LogicNet on MNIST
 python examples/train_fashion_mnist.py    # conv LogicTreeNet on FashionMNIST
 python examples/train_cifar10_small.py    # fast conv LogicTreeNet on CIFAR-10 (~60%)
 python examples/train_cifar10_large.py    # the paper's large LogicTreeNet-G (heavy)
-python examples/train_mnist_warp.py       # arity-4 WARP network on MNIST
 ```
 
 Each loads a (thermometer-binarized) dataset via the library's data utilities,
@@ -81,16 +80,13 @@ deployable Boolean circuit). Measured with the default configs:
 |---|---|---|
 | `train_mnist.py` | FC `LogicNet` (width 10000 × 6) | **~98.1%** |
 | `train_fashion_mnist.py` | conv `LogicTreeNet` (5-thr + edges) | **~87.5%** |
-| `train_cifar10_small.py` | conv `LogicTreeNet` (edges) | ~55% (~10 min) |
-| `train_cifar10_large.py` | LogicTreeNet-G architecture (`--scale` to lighten) | heavy — ~86% needs KD |
-| `train_mnist_warp.py` | arity-4 WARP (`WARPNetN`, 2⁴-LUT nodes) | **~86%** |
+| `train_cifar10_small.py` | conv `LogicTreeNet` (edges) | **~60%** (~5 min) |
+| `train_cifar10_large.py` | LogicTreeNet-G architecture (`--scale` to lighten) | TBD |
 
 > MNIST is easy enough for the flat fully-connected `LogicNet`. FashionMNIST and
 > CIFAR-10 have spatial structure, so they use the **convolutional**
-> `LogicTreeNet` (logic-gate-tree convs + OR pooling). The CIFAR example is the
-> paper's large **LogicTreeNet-G** architecture (heavy — see its `--scale` flag
-> and the KD reproduction in `experiments/`); for small conv nets like the
-> FashionMNIST one the two biggest levers are **edge-detector input channels**
+> `LogicTreeNet` (logic-gate-tree convs + OR pooling). For small conv nets like
+> the FashionMNIST one the two biggest levers are **edge-detector input channels**
 > and a **low GroupSum `tau`** (high `tau` starves the conv gates of gradient).
 
 ## Architecture
