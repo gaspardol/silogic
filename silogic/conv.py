@@ -24,6 +24,12 @@ try:
 except Exception:
     _HAS_TRITON = False
 
+try:
+    from .triton_conv_topk import tree_conv_topk
+    _HAS_TRITON_TOPK = True
+except Exception:
+    _HAS_TRITON_TOPK = False
+
 GATE_A = 3  # index of the 'A' (pass-through) gate in BASIS_COEFFS ordering
 
 
@@ -46,7 +52,8 @@ class ConvLogicTree(nn.Module):
         connect (str): Leaf wiring mode. ``"topk"`` (default) uses learnable
             Top-K connectivity (softmax over ``k`` candidates per leaf);
             ``"fixed"`` uses one fixed random leaf index per position (Petersen
-            baseline) and enables the Triton ``tree_conv`` kernel on CUDA.
+            baseline). Both have fused Triton kernels on CUDA (``tree_conv`` for
+            fixed, ``tree_conv_topk`` for Top-K).
         k (int): Top-K candidate pool size per leaf when ``connect="topk"``
             (clamped to the per-tree pool ``n_chan * kernel * kernel``).
             Unused for ``"fixed"``. Default ``4``.
@@ -116,6 +123,14 @@ class ConvLogicTree(nn.Module):
                 for i in range(out_channels)])     # [n, leaves, k]
             self.register_buffer("leaf_cand", cand)
             self.conn = nn.Parameter(torch.randn(out_channels, self.leaves, kk))
+            # decompose candidate flat indices -> (channel, dy, dx) for the
+            # fused Top-K Triton kernel (same layout as the fixed path)
+            kk2 = kernel * kernel
+            self.register_buffer("lc_cm", (cand // kk2).to(torch.int32))
+            rem = cand % kk2
+            self.register_buffer("lc_ch", (rem // kernel).to(torch.int32))
+            self.register_buffer("lc_cw", (rem % kernel).to(torch.int32))
+            self.use_triton_topk = _HAS_TRITON_TOPK
 
         # Gate logits per tree level. Level i combines 2^(d-i) -> 2^(d-i-1).
         self.gate_logits = nn.ParameterList()
@@ -183,6 +198,12 @@ class ConvLogicTree(nn.Module):
             coef = self._basis_coef().contiguous()
             return tree_conv(x, coef, self.cm_idx, self.ch_idx, self.cw_idx,
                              self.d, self.stride, self.padding, Ho, Wo)
+        if (self.connect == "topk" and getattr(self, "use_triton_topk", False)
+                and x.is_cuda and not self.residual):
+            coef = self._basis_coef().contiguous()
+            w = F.softmax(self.conn, dim=2).contiguous()
+            return tree_conv_topk(x, coef, w, self.lc_cm, self.lc_ch, self.lc_cw,
+                                  self.d, self.k, self.stride, self.padding, Ho, Wo)
         patches = F.unfold(x, (self.kh, self.kw), stride=self.stride,
                            padding=self.padding)             # [B, C*kh*kw, L]
         leaves = self._gather_leaves(patches)

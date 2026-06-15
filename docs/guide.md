@@ -95,9 +95,10 @@ conv gates by `1/tau` and starves them, so the net underfits.
 ```
 
 `residual_init=True` biases each gate toward pass-through `A`, letting deep trees
-train without vanishing gradients. Set `connect="fixed"` to recover Petersen's
-fixed-wiring baseline (and enable the fused `tree_conv` Triton kernel);
-`connect="topk"` learns the leaf connectivity. {meth}`gate_count(in_hw)
+train without vanishing gradients. `connect="topk"` learns the leaf connectivity
+(the default); `connect="fixed"` recovers Petersen's fixed-wiring baseline. Both
+have **fused Triton kernels** on CUDA (`tree_conv` for fixed, `tree_conv_topk`
+for Top-K — the latter ~11× faster than the pure-PyTorch path). {meth}`gate_count(in_hw)
 <silogic.LogicTreeNet.gate_count>` estimates the deployed binary-gate cost.
 
 ## WARP networks

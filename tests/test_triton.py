@@ -33,6 +33,31 @@ def test_tree_conv_matches_pytorch():
 
 
 @requires_cuda
+def test_tree_conv_topk_matches_pytorch_fwd_and_grad():
+    conv = ConvLogicTree(6, 16, kernel=3, tree_depth=3, connect="topk", k=4,
+                         n_chan=2, seed=1).cuda().eval()
+    x0 = random_bits(4, 6, 16, 16).cuda()
+    assert getattr(conv, "use_triton_topk", False)
+
+    def run(flag):
+        conv.use_triton_topk = flag
+        x = x0.clone().requires_grad_(True)
+        for p in conv.parameters():
+            p.grad = None
+        y = conv(x)
+        y.pow(2).sum().backward()
+        return y.detach(), x.grad.clone(), conv.conn.grad.clone(), \
+            conv.gate_logits[0].grad.clone()
+
+    yt, gxt, gct, ggt = run(True)
+    yp, gxp, gcp, ggp = run(False)
+    assert (yt - yp).abs().max() < 1e-4          # forward
+    assert (gxt - gxp).abs().max() < 1e-3        # grad input
+    assert (gct - gcp).abs().max() < 1e-3        # grad connections
+    assert (ggt - ggp).abs().max() < 1e-3        # grad gate logits
+
+
+@requires_cuda
 def test_warp_logic_matches_pytorch_fwd_and_grad():
     layer = WARPLayer(256, 512, k=8, tau=0.5, seed=1).cuda()
     x = random_bits(64, 256).cuda().requires_grad_(True)
