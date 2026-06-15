@@ -36,13 +36,16 @@ def main():
                    help="disable affine+elastic x10 augmentation (faster, ~96%% hard)")
     p.set_defaults(augment=True)
     p.add_argument("--no-compile", action="store_true")
+    p.add_argument("--download", action="store_true",
+                   help="download the dataset via torchvision if not already present")
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = p.parse_args()
 
     print(f"Loading MNIST (augment={args.augment}) ...", flush=True)
     Xtr, ytr, Xte, yte, in_dim = get_dataset_cached(
         "mnist", MNIST_THRESH, augment=args.augment,
-        n_aug=10 if args.augment else 1, device=args.device)
+        n_aug=10 if args.augment else 1, device=args.device,
+        download=args.download)
     print(f"  in_dim={in_dim}  train={tuple(Xtr.shape)}  test={tuple(Xte.shape)}")
 
     net = LogicNet(in_dim, args.width, args.depth, num_classes=10,

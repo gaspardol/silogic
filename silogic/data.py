@@ -40,17 +40,17 @@ def binarize(x, thresholds):
     return torch.cat(bits, dim=1)
 
 
-def _raw(dataset, train):
+def _raw(dataset, train, download=False):
     if dataset == "mnist":
-        ds = tv.datasets.MNIST(DATA_ROOT, train=train, download=False)
+        ds = tv.datasets.MNIST(DATA_ROOT, train=train, download=download)
         imgs = ds.data.unsqueeze(1).float() / 255.0  # [N,1,28,28]
         labels = ds.targets.clone()
     elif dataset == "fmnist":
-        ds = tv.datasets.FashionMNIST(DATA_ROOT, train=train, download=False)
+        ds = tv.datasets.FashionMNIST(DATA_ROOT, train=train, download=download)
         imgs = ds.data.unsqueeze(1).float() / 255.0
         labels = ds.targets.clone()
     elif dataset == "cifar10":
-        ds = tv.datasets.CIFAR10(DATA_ROOT, train=train, download=False)
+        ds = tv.datasets.CIFAR10(DATA_ROOT, train=train, download=download)
         imgs = torch.from_numpy(ds.data).permute(0, 3, 1, 2).float() / 255.0
         labels = torch.tensor(ds.targets)
     else:
@@ -132,7 +132,7 @@ def edge_bits(x, edge_thr=None):
 
 
 def get_cifar_spatial(thresholds=None, n_aug=8, device="cuda", seed=0,
-                      edges=False):
+                      edges=False, download=False):
     """CIFAR-10 as spatial binary channels for convolutional logic nets.
 
     Returns (Xtr [N,Ck,32,32] uint8, ytr, Xte, yte, channels). Results are
@@ -148,6 +148,8 @@ def get_cifar_spatial(thresholds=None, n_aug=8, device="cuda", seed=0,
             Default ``0``.
         edges (bool): If ``True`` append Sobel/Laplacian edge channels via
             :func:`edge_bits`. Default ``False``.
+        download (bool): If ``True`` allow torchvision to download the dataset
+            into ``data/`` when it is not already present. Default ``False``.
 
     Returns:
         tuple: ``(Xtr, ytr, Xte, yte, channels)`` where ``Xtr`` is uint8
@@ -163,8 +165,8 @@ def get_cifar_spatial(thresholds=None, n_aug=8, device="cuda", seed=0,
         d = torch.load(path)
         return d["Xtr"], d["ytr"], d["Xte"], d["yte"], d["ch"]
     torch.manual_seed(seed)
-    imgs, labels = _raw("cifar10", train=True)
-    te_imgs, te_labels = _raw("cifar10", train=False)
+    imgs, labels = _raw("cifar10", train=True, download=download)
+    te_imgs, te_labels = _raw("cifar10", train=False, download=download)
     transform = T.Compose([
         T.RandomCrop(32, padding=4, padding_mode="reflect"),
         T.RandomHorizontalFlip(p=0.5),
@@ -191,7 +193,7 @@ def get_cifar_spatial(thresholds=None, n_aug=8, device="cuda", seed=0,
 
 
 def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
-                       edges=True):
+                       edges=True, download=False):
     """FashionMNIST as spatial binary channels for convolutional logic nets.
 
     Thermometer-encodes each 28x28 image (default 5 levels) and, with
@@ -212,6 +214,8 @@ def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
             Default ``0``.
         edges (bool): If ``True`` append Sobel/Laplacian edge channels via
             :func:`edge_bits`. Default ``True``.
+        download (bool): If ``True`` allow torchvision to download the dataset
+            into ``data/`` when it is not already present. Default ``False``.
 
     Returns:
         tuple: ``(Xtr, ytr, Xte, yte, channels)`` where ``Xtr`` is uint8
@@ -227,8 +231,8 @@ def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
         d = torch.load(path)
         return d["Xtr"], d["ytr"], d["Xte"], d["yte"], d["ch"]
     torch.manual_seed(seed)
-    imgs, labels = _raw("fmnist", train=True)
-    te_imgs, te_labels = _raw("fmnist", train=False)
+    imgs, labels = _raw("fmnist", train=True, download=download)
+    te_imgs, te_labels = _raw("fmnist", train=False, download=download)
     transform = T.RandomAffine(degrees=8, translate=(0.07, 0.07), scale=(0.9, 1.1))
 
     def encode(im):
@@ -249,7 +253,7 @@ def get_fmnist_spatial(thresholds=None, n_aug=2, device="cuda", seed=0,
 
 
 def get_dataset_cached(dataset, thresholds=None, augment=True, n_aug=None,
-                       device="cuda", seed=0):
+                       device="cuda", seed=0, download=False):
     """Cache the (expensive) augmented binarized dataset to disk.
 
     Thin disk-caching wrapper around :func:`get_dataset`; on a cache miss it
@@ -265,6 +269,8 @@ def get_dataset_cached(dataset, thresholds=None, augment=True, n_aug=None,
         device (str): Device used to run augmentation. Default ``"cuda"``.
         seed (int): RNG seed for augmentation; part of the cache key.
             Default ``0``.
+        download (bool): If ``True`` allow torchvision to download the dataset
+            into ``data/`` when it is not already present. Default ``False``.
 
     Returns:
         tuple: ``(Xtr, ytr, Xte, yte, in_dim)`` as returned by
@@ -278,14 +284,15 @@ def get_dataset_cached(dataset, thresholds=None, augment=True, n_aug=None,
         d = torch.load(path)
         return d["Xtr"], d["ytr"], d["Xte"], d["yte"], d["in_dim"]
     torch.manual_seed(seed)
-    out = get_dataset(dataset, thresholds, augment, n_aug, device)
+    out = get_dataset(dataset, thresholds, augment, n_aug, device,
+                      download=download)
     torch.save({"Xtr": out[0], "ytr": out[1], "Xte": out[2],
                 "yte": out[3], "in_dim": out[4]}, path)
     return out
 
 
 def get_dataset(dataset, thresholds=None, augment=True, n_aug=None,
-                device="cuda"):
+                device="cuda", download=False):
     """Return (Xtrain_uint8, ytrain, Xtest_uint8, ytest, in_dim).
 
     Augmented training copies are pre-generated once and binarized (flat
@@ -303,6 +310,8 @@ def get_dataset(dataset, thresholds=None, augment=True, n_aug=None,
             when ``None`` (``10`` for MNIST/FMNIST, ``8`` for CIFAR-10).
             Default ``None``.
         device (str): Device used to run augmentation. Default ``"cuda"``.
+        download (bool): If ``True`` allow torchvision to download the dataset
+            into ``data/`` when it is not already present. Default ``False``.
 
     Returns:
         tuple: ``(Xtr, ytr, Xte, yte, in_dim)`` where ``Xtr``/``Xte`` are uint8
@@ -315,8 +324,8 @@ def get_dataset(dataset, thresholds=None, augment=True, n_aug=None,
     if n_aug is None:
         n_aug = {"mnist": 10, "fmnist": 10, "cifar10": 8}[dataset]
 
-    imgs, labels = _raw(dataset, train=True)
-    test_imgs, test_labels = _raw(dataset, train=False)
+    imgs, labels = _raw(dataset, train=True, download=download)
+    test_imgs, test_labels = _raw(dataset, train=False, download=download)
 
     if dataset in ("mnist", "fmnist"):
         transform = T.Compose([
