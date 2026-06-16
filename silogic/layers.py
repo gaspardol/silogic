@@ -65,6 +65,8 @@ class LogicLayer(nn.Module):
         # legacy attribute: the connectome NAME (the submodule is self._conn)
         self.connectome = connectome
         self._conn = build_connectome(connectome, in_dim, out_dim, arity, k, seed, window)
+        if gate_select == "hard" and hasattr(self._conn, "ste"):
+            self._conn.ste = True   # straight-through input selection (soft==hard)
         self.node = build_node(node, out_dim, arity, gate_eval=gate_eval,
                                tau=tau, degree=degree, gate_select=gate_select,
                                gumbel_tau=gumbel_tau)
@@ -378,7 +380,7 @@ class ConvLogicTree(nn.Module):
             g = patches[:, idx, :]                            # [B, n*leaves, L]
             return g.view(B, self.n, self.leaves, L)
         else:
-            w = F.softmax(self.conn, dim=2)                  # [n, leaves, k]
+            w = self._topk_w()                               # [n, leaves, k]
             idx = self.leaf_cand.reshape(-1)                 # [n*leaves*k]
             g = patches[:, idx, :].view(B, self.n, self.leaves, self.k, L)
             return torch.einsum("bnlkL,nlk->bnlL", g, w)
@@ -455,7 +457,7 @@ class ConvLogicTree(nn.Module):
                                          self.padding, Ho, Wo)
             if self.connect == "topk" and kernels.HAS_CONV_TOPK:
                 coef = self._basis_coef().contiguous()
-                w = F.softmax(self.conn, dim=2).contiguous()
+                w = self._topk_w().contiguous()
                 return kernels.tree_conv_topk(x, coef, w, self.lc_cm, self.lc_ch,
                                               self.lc_cw, self.d, self.k, self.stride,
                                               self.padding, Ho, Wo)
@@ -471,7 +473,7 @@ class ConvLogicTree(nn.Module):
                 Kc = 1
             else:
                 cm, ch, cw = self.lc_cm, self.lc_ch, self.lc_cw  # [n, leaves, K]
-                w = F.softmax(self.conn, dim=2).contiguous()
+                w = self._topk_w().contiguous()
                 Kc = self.k
             return kernels.conv_hybrid(x, s, w, cm.contiguous(), ch.contiguous(),
                                        cw.contiguous(), self.d, self.node_arity, Kc,
@@ -481,6 +483,18 @@ class ConvLogicTree(nn.Module):
         leaves = self._gather_leaves(patches)
         out = self._eval_soft(leaves)                        # [B, n, L]
         return out.view(B, self.n, Ho, Wo)
+
+    def _topk_w(self):
+        """Top-K leaf-selection weights ``[n, leaves, k]``. Plain ``softmax(conn)``
+        by default; with ``gate_select=="hard"`` a **straight-through argmax**
+        (one-hot forward, softmax gradient) so the soft forward gathers the SAME
+        single candidate as :meth:`forward_hard` — collapsing the conv
+        discretization gap while keeping the connectivity learnable."""
+        w = F.softmax(self.conn, dim=2)
+        if self.gate_select == "hard":
+            hard = F.one_hot(self.conn.argmax(dim=2), w.shape[-1]).to(w.dtype)
+            w = hard + w - w.detach()
+        return w
 
     def _hybrid_s(self):
         """Per-node LUT entries ``sigmoid(logits)`` -> ``[n, total_nodes, 2^arity]``,

@@ -43,7 +43,8 @@ Repository = "https://github.com/gaspardol/silogic"
 Issues = "https://github.com/gaspardol/silogic/issues"
 
 [tool.setuptools]
-packages = ["silogic", "silogic.kernels"]
+packages = ["silogic", "silogic.kernels", "silogic.fpga",
+            "silogic.bitpacking", "silogic.bitpacking.kernels"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -234,6 +234,7 @@ class LogicConvNet(nn.Module):
         d_in = self.feat_dim
         for j, w in enumerate(head_widths):
             layers.append(LogicLayer(d_in, w, connectome=head_connect, k=head_k, node = node,
+                                     gate_select=gate_select,
                                      use_triton=use_triton, seed=seed * 31 + j))
             d_in = w
         self.head_layers = nn.ModuleList(layers)

@@ -109,9 +109,14 @@ class TopKConnectome(nn.Module):
         self.register_buffer("cand", cand)               # [out, arity, k]
         self.register_buffer("cand_i32", cand.to(torch.int32))
         self.conn = nn.Parameter(torch.randn(out_dim, arity, kk, generator=gen))
+        self.ste = False   # straight-through (argmax forward, softmax grad) selection
 
     def weights(self):
-        return F.softmax(self.conn, dim=2)               # [out, arity, k]
+        w = F.softmax(self.conn, dim=2)                  # [out, arity, k]
+        if self.ste:        # hard one-hot forward, soft gradient -> soft==hard select
+            hard = F.one_hot(self.conn.argmax(dim=2), w.shape[-1]).to(w.dtype)
+            w = hard + w - w.detach()
+        return w
 
     def candidates_i32(self):
         return self.cand_i32

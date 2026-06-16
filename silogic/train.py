@@ -63,7 +63,8 @@ def eval_soft(model, X, y, device, bs=1024):
 def train_model(model, Xtr, ytr, Xte, yte, device, epochs=200, bs=256,
                 lr=0.075, val_every=25, gpu_data=True, log=_print,
                 Xval=None, yval=None, compile_=True, eval_bs=1024,
-                optimizer="adam", weight_decay=0.0, cosine=False):
+                optimizer="adam", weight_decay=0.0, cosine=False, flip_p=0.0,
+                cutout=0):
     """Train and return dict with metrics + per-epoch history.
 
     Xtr/Xte are uint8 tensors. If gpu_data, the full train set is moved to
@@ -101,6 +102,10 @@ def train_model(model, Xtr, ytr, Xte, yte, device, epochs=200, bs=256,
             ``optimizer="adamw"``. Default ``0.0``.
         cosine (bool): If ``True`` apply cosine LR decay from ``lr`` to ``0``
             over ``epochs``. Default ``False``.
+        flip_p (float): Bit-flip input augmentation probability (BitLogic
+            regularizer): each training batch flips each binary input bit
+            independently with probability ``flip_p`` (``0`` disables it).
+            Only meaningful for ``{0,1}`` inputs. Default ``0.0``.
 
     Returns:
         dict: Metrics and history with keys ``"test_soft"`` (float, soft
@@ -146,6 +151,19 @@ def train_model(model, Xtr, ytr, Xte, yte, device, epochs=200, bs=256,
             else:
                 xb = Xtr_d[bidx].to(device).float()
                 yb = ytr_d[bidx].to(device)
+            if flip_p > 0.0:                  # bit-flip input augmentation
+                m = torch.rand_like(xb) < flip_p
+                xb = torch.where(m, 1.0 - xb, xb)
+            if cutout > 0 and xb.dim() == 4:  # spatial cutout (zero a random square)
+                B, _, H, W = xb.shape
+                cy = torch.randint(0, H, (B,), device=xb.device)
+                cx = torch.randint(0, W, (B,), device=xb.device)
+                yy = torch.arange(H, device=xb.device).view(1, H, 1)
+                xx = torch.arange(W, device=xb.device).view(1, 1, W)
+                r = cutout // 2
+                mask = (((yy - cy.view(B, 1, 1)).abs() <= r) &
+                        ((xx - cx.view(B, 1, 1)).abs() <= r)).unsqueeze(1)
+                xb = xb.masked_fill(mask, 0.0)
             logits = fwd(xb)
             loss = F.cross_entropy(logits, yb)
             opt.zero_grad()

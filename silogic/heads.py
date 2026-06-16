@@ -25,13 +25,16 @@ class GroupSum(nn.Module):
             Default ``1.0``.
     """
 
-    def __init__(self, num_classes=10, tau=1.0):
+    def __init__(self, num_classes=10, tau=1.0, feature_ste=False):
         super().__init__()
         self.num_classes = num_classes
         self.tau = tau
+        self.feature_ste = feature_ste
 
     def forward(self, x):
         b, w = x.shape
+        if self.feature_ste:          # sum the SAME {0,1} bits seen at inference
+            x = binarize_ste(x)       # (closes the soft/hard GroupSum gap)
         x = x.view(b, self.num_classes, w // self.num_classes)
         return x.sum(dim=2) / self.tau
 
@@ -121,5 +124,5 @@ def build_decoder(kind, width, num_classes=10, tau=1.0, feature_ste=True):
     """Construct a head by name: ``"groupsum"`` (default) or a :class:`LearnedDecoder`."""
     if kind == "groupsum":
         assert width % num_classes == 0, "width must be divisible by classes"
-        return GroupSum(num_classes=num_classes, tau=tau)
+        return GroupSum(num_classes=num_classes, tau=tau, feature_ste=feature_ste)
     return LearnedDecoder(kind, width, num_classes, feature_ste=feature_ste)
