@@ -80,5 +80,6 @@ hard_logits = net.forward_hard(x)          # Boolean circuit — deploy this
 :maxdepth: 2
 
 guide
+approximation
 api
 ```
