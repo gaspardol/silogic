@@ -1,130 +1,185 @@
 # Universal approximation for FC logic networks
 
 This note formulates the sense in which a **fully-connected logic network**
-({class}`~silogic.LogicNet`) with a **`GroupSum` head** is a *universal
-approximator*, and states the result for two representative node arities used in
-the library — **arity 2** (`node="gate16"`) and **arity 6** (an
-`arity=6` LUT node: `"multilinear"` / `"hybrid"` / `"walsh"`).
+({class}`~silogic.LogicNet`) with a linear-style head — the parameter-free
+{class}`~silogic.GroupSum`, or a learned {class}`~silogic.heads.LearnedDecoder`
+— is a *universal approximator*, and works out the depth, width, and arity it
+costs. Results are stated for the two representative node arities in the library:
+**arity 2** (`node="gate16"`) and **arity 6** (an `arity=6` LUT node:
+`"multilinear"` / `"hybrid"` / `"walsh"`).
 
-The statements below are about the **hard (deployed) circuit**
-(`forward_hard`) — what the discretized network can *represent*. Trainability
-(whether SGD finds these weights) and the soft→hard discretization gap are
-separate questions, discussed at the end.
+Everything below is about the **hard (deployed) circuit** (`forward_hard`) — what
+the discretized network can *represent*. Trainability (whether SGD finds these
+weights) and the soft→hard gap are separate questions, noted at the end.
 
 ## Setup
 
-Inputs are binary, $x \in \{0,1\}^n$ (this is what logic nets consume — the
-thermometer-binarized features). A hard {class}`~silogic.LogicNet` computes, at
-each layer, a width-$W$ vector of Boolean values, where every node is a Boolean
-function of the `arity` wires its connectome selects from the previous layer.
-The {class}`~silogic.GroupSum` head splits the final width-$W$ layer into $C$
-equal blocks and outputs, per class $c$, the block popcount
+Inputs are binary, $x \in \{0,1\}^n$ (what logic nets consume — the
+thermometer-binarized features). A hard {class}`~silogic.LogicNet` is a stack of
+$D$ layers of width $W$; each node is a Boolean function of the `arity` $=r$
+wires its connectome selects from the previous layer. The head maps the final
+width-$W$ feature vector $\phi(x)\in\{0,1\}^W$ to class scores:
 
-$$s_c(x) \;=\; \sum_{j \in \text{block}_c} y_j(x), \qquad y_j(x)\in\{0,1\},$$
+- **`GroupSum`** splits $\phi$ into $C$ equal blocks and outputs the block
+  popcounts $s_c(x)=\sum_{j\in\text{block}_c}\phi_j(x)$;
+- a **learned linear decoder** outputs $s_c(x)=\langle w_c,\phi(x)\rangle+b_c$.
 
-and the prediction is $\hat g(x) = \arg\max_c s_c(x)$ (`tau` is an
-argmax-invariant positive scale). So the model is exactly a
+The prediction is $\hat g(x)=\arg\max_c s_c(x)$. **Both heads are linear readouts
+over $\phi$** — `GroupSum` is just the special case with fixed block-structured
+$\{0,1\}$ weights. So the model is
 
-> **layered, bounded-fan-in Boolean circuit → per-class popcount → argmax.**
+> **[argmax over $C$ linear forms] ∘ [layered fan-in-$r$ LUT circuit].**
 
 Because the domain $\{0,1\}^n$ is **finite**, "universal approximation" is not a
-density statement in a function space — it is *exact representation*: can the
-architecture compute **every** classifier $g:\{0,1\}^n \to \{1,\dots,C\}$?
+density statement — it is *exact representation*: can the architecture compute
+**every** classifier $g:\{0,1\}^n\to\{1,\dots,C\}$?
 
-## The theorem
+## The one governing quantity: PTF degree
 
-**Theorem (universal representation on the Boolean cube).**
-Let the node family be *Boolean-complete at its arity* — i.e. a single node can
-realize a functionally complete gate (e.g. NAND). Then for **every** target
-$g:\{0,1\}^n \to \{1,\dots,C\}$ there is a hard `LogicNet` with a `GroupSum`
-head that computes $\hat g = g$ *exactly*.
+Every node of arity $r$ is a multilinear polynomial of degree $\le r$. Composing
+$D$ layers multiplies degree: a depth-$D$ body produces features of degree
+$\le r^{D}$. A linear head takes the sign of a linear form in those features.
+Hence, for binary classification, the whole model computes exactly a
 
-The completeness hypothesis holds for both arities we care about:
+$$\boxed{\;\textbf{degree-}r^{D}\textbf{ polynomial threshold function (PTF).}\;}$$
 
-| node | arity | hard function class per node | complete? |
-|---|---|---|---|
-| `gate16` | 2 | **all 16** two-input Boolean functions | ✓ (contains NAND, gate 14) |
-| `multilinear` / `hybrid` | 6 | **all $2^{2^6}$** six-input functions (a full `LUT_6`) | ✓ (a fortiori) |
-| `walsh` (arity 6) | 6 | $\operatorname{sign}$ of a full $2^6$-coeff multilinear form = **all** six-input functions | ✓ |
-| `linear` | any | only linearly-separable (threshold) functions | ✗ — *not* complete |
-| `polynomial` (deg $d$) | any | only degree-$d$ threshold functions | ✗ unless $d=$ arity |
+(For $C>2$ classes, each pairwise decision boundary is such a PTF.) This single
+statement organizes everything:
 
-So **arity 2 (`gate16`) and arity 6 (`multilinear`/`hybrid`/`walsh`) both give a
-universal architecture**; `linear` and low-degree `polynomial` nodes do **not**
-(they cannot even represent XOR of two inputs, so they are genuinely weaker).
+| body depth $D$ | representable class | universal? |
+|---|---|---|
+| $1$ | degree-$r$ PTFs | **no** |
+| $\lceil\log_r n\rceil$ | degree-$n$ PTFs = **all** functions | **yes** |
+| general $D$ | degree-$r^{D}$ PTFs | iff $r^{D}\ge n$ |
 
-### Proof
+- **Tree/body depth** sets the achievable degree $r^{D}$ — the real lever for
+  universality.
+- **The head** (GroupSum *or* linear) supplies the outer threshold; it sets
+  *which* degree-$r^{D}$ PTF and how finely weighted, **not** the degree. Swapping
+  GroupSum for a learned linear decoder changes trainability and weight
+  resolution, **not** the representable class.
+- **Width** controls how much of the degree-$r^{D}$ class you actually reach.
 
-1. **The body computes the class indicators.** For each class $c$ define the
-   Boolean indicator $b_c(x) = \mathbb{1}[\,g(x)=c\,]$. A Boolean-complete gate
-   basis is functionally complete, so a layered fan-in-`arity` circuit can
-   compute each $b_c$ (e.g. build its DNF: OR of the min-terms where $g(x)=c$;
-   AND/OR/NOT are all in `gate16`, and any single `LUT_6` computes a 2-input
-   NAND by ignoring four inputs). A strictly-layered net carries intermediate
-   values forward with pass-through nodes (`gate16`'s `A` gate, or an identity
-   `LUT`), which is exactly what `residual_init` / `wire_residual` provide.
+## One layer is *not* universal (any width)
 
-2. **The head routes indicators to argmax.** Make the last layer width
-   $W = C\cdot m$ ($m\ge 1$ nodes per block) and set every node in block $c$ to
-   output $b_c(x)$. Then $s_c(x) = m\, b_c(x)$. Because $g$ is a function,
-   exactly one indicator is $1$, so $s_{g(x)} = m > 0$ and $s_{c}=0$ for
-   $c\ne g(x)$ — no ties, and $\arg\max_c s_c = g(x)$. Even $m=1$ suffices. ∎
+At $D=1$ the features are $r$-juntas (degree $\le r$), so one layer + head realizes
+exactly the **degree-$r$ PTFs**. Width $\to\infty$ only refines the weights — it
+cannot raise the degree. The clean witnesses are parities, which have PTF-degree
+exactly $k$ (Minsky–Papert):
 
-The construction needs a connectome that can wire a node to the specific
-previous-layer nodes its DNF requires. `connectome="dense"` can (its hard select
-is an argmax over *all* previous nodes); `topk`/`fixed` draw **random** candidate
-pools, so for them the theorem holds *with high probability* over the wiring
-once width and `k` are large enough that every required wire lands in some node's
-candidate set.
+| single layer | can compute | **cannot** compute (any width) |
+|---|---|---|
+| arity 2 (`gate16`) | all degree-2 PTFs | **XOR of 3 inputs** (degree 3) |
+| arity 6 (LUT-6) | all degree-6 PTFs | **XOR of 7 inputs** (degree 7) |
 
-## Arity 2 vs. arity 6: what changes
+So an arity-2 `LogicNet` with `depth=1` and a billion nodes still cannot learn
+3-bit parity. This is the point where the textbook one-hidden-layer UAT analogy
+breaks: an MLP hidden unit reads *all* $n$ inputs (effectively arity $n$); a logic
+node is capped at arity $r$, hence degree $r$.
 
-Both arities are universal, so the difference is **cost**, not capability. The
-worst-case bounds are the classical circuit-complexity ones.
+## Universality: depth $\log_r n$, width up to $2^{n}$
 
-- **Depth.** An `arity`-$r$ LUT absorbs $\log_2 r$ levels of 2-input gates, so a
-  function needing 2-input depth $\approx n$ needs LUT-$r$ depth
-  $\approx n/\log_2 r$. Arity 6 is therefore about $\log_2 6 \approx 2.585\times$
-  **shallower** than arity 2 — which is why the FPGA export collapses arity-2 gate
-  fabric to very few LUT levels, and why deep 2-input trees lean on
-  `residual_init`.
+Raise the depth to $D=\lceil\log_r n\rceil$. Now the body can compute **min-terms**
+— a full conjunction $\bigwedge_i \ell_i(x)$ of all $n$ literals is an associative
+AND, hence an arity-$r$ tree of depth $\lceil\log_r n\rceil$. Exactly one min-term
+fires at any input, so a linear/`GroupSum` head over the min-terms assigns an
+independent score to every point of the cube — **any** $g$, exactly:
 
-- **Size (worst case, Shannon–Lupanov).** Almost every $g:\{0,1\}^n\to\{0,1\}$
-  needs $\Theta(2^n/n)$ gates *regardless of arity*; for $C$ classes,
-  $\Theta(C\cdot 2^n/n)$ nodes. Higher arity buys only a **constant factor**
-  here — it does not change the exponential worst case. A counting argument makes
-  the trade-off explicit: a layered net with $N = W\!\cdot\!D$ nodes of arity $r$
-  encodes at most $\sim N\,(2^r + r\log_2 W)$ bits (truth table + wiring per
-  node), so representing all targets forces
+- put each class-$c$ point's min-term in block $c$ (GroupSum), or give it weight
+  $1$ in row $c$ (linear decoder); the unique firing min-term picks the class.
 
-  $$N\,\bigl(2^{r} + r\log_2 W\bigr)\ \gtrsim\ C\cdot 2^{n}.$$
+This is the universal construction. Its cost:
 
-  Arity 6 contributes $2^6 = 64$ truth-table bits per node vs. arity 2's
-  $2^2 = 4$, so it reaches the same capacity with a constant factor fewer nodes —
-  at the price of $2^r$ learnable entries **per node** (64 vs. 4), i.e. the
-  soft→hard gap and the parameter count per node grow with arity (hence the
-  arity warning in the [guide](guide.md)).
+- **body depth** $\lceil\log_r n\rceil$ (just deep enough for one conjunction),
+- **width** up to $2^{n}$ min-terms (Shannon–Lupanov sharing brings the worst-case
+  node count down to $\Theta(2^{n}/n)$; see below),
+- the **head** does the rest.
 
-**Summary.** Universality is a property of the *gate basis*, and it is already
-achieved at arity 2 (`gate16` ⊇ NAND). Going to arity 6 does **not** enlarge the
-representable function class — it trades a larger per-node LUT for a
-constant-factor-smaller, $\approx 2.6\times$-shallower circuit.
+So the *base universal classifier* is **log-depth, growing-width** — the intuition
+that "one shallow layer, width $\to\infty$" almost works is right once the depth is
+$\log_r n$ rather than $1$, because the head is an unbounded-fan-in aggregator.
+
+### Body depth vs. total gate depth — where the hardness lives
+
+The log-depth body does **not** mean the whole computation is shallow. A
+`GroupSum`/linear head over $W$ features is an **unbounded-fan-in linear
+threshold**: expanded into gates, its popcount + argmax has depth
+$\Theta(\log W)=\Theta(n)$. The head absorbs the deep "OR-of-min-terms" that a
+bounded-fan-in body would need $\Theta(n/\log_2 r)$ layers to do itself. Two
+different depth accountings, both true:
+
+| what is counted | universal depth |
+|---|---|
+| **LUT-tree body layers** (before the head) | $\lceil\log_r n\rceil$ |
+| **total logic-gate depth**, expanding the head's popcount | $\Theta(n)$ |
+| **pure fan-in-$r$ circuit**, if the final decision must also be one logic node | $\Theta(n/\log_2 r)$ (formula depth) |
+
+The library's own FPGA export shows this directly: the gate fabric collapses to
+~2 LUT levels while the **GroupSum popcount is the critical path (~28 of 30
+levels)** — the logic is shallow, the head is deep.
+
+### GroupSum vs. a learned linear head
+
+Because both are linear readouts, they represent the **same** class at a given
+body. The differences are practical:
+
+- a learned linear head with **real** weights needs multiply–accumulates — it
+  breaks the "pure Boolean, no multiplies" property `GroupSum` preserves (a
+  popcount). The `"ternary"` {class}`~silogic.heads.LearnedDecoder` recovers it
+  with $\{-1,0,+1\}$ weights (a signed popcount);
+- a linear head can up-weight informative trees, so it typically needs **fewer**
+  trees than `GroupSum` for the same accuracy — a width/trainability win, not an
+  expressiveness one.
+
+## Size: the Shannon–Lupanov floor
+
+Depth $\log_r n$ makes the model universal; **width** is what a worst-case target
+costs. A layered arity-$r$ net with $N=W\!\cdot\!D$ nodes over $M\le N+n$ signals
+realizes $\le\big(2^{2^{r}}M^{r}\big)^{N}$ circuits, and there are $C^{2^{n}}$
+targets, forcing
+
+$$N\bigl(2^{r}+r\log_2 M\bigr)\ \gtrsim\ 2^{n}\log_2 C
+\qquad\Longrightarrow\qquad
+N\ \gtrsim\ \frac{2^{n}\log_2 C}{2^{r}+r\,n}.$$
+
+This is tight: Lupanov's construction matches it, and for fan-in 2 the constant is
+exactly $1$ — almost every single-output $g$ needs $(1\pm o(1))\,2^{n}/n$ gates and
+none fewer. Note $C$ enters only as $\log_2 C$ (the class indicators share
+sub-circuitry).
+
+For *structured* targets the width collapses far below $2^{n}/n$: any symmetric
+function (depends only on the popcount) is a shallow adder tree, any degree-$r$
+PTF is a single wide layer, any linearly separable target is `depth=1, width=C`.
+
+## Arity 2 vs. arity 6
+
+Both arities are universal — arity changes cost, not capability:
+
+- **Depth.** An arity-$r$ LUT absorbs $\log_2 r$ levels of 2-input gates, so the
+  universal body depth $\log_r n$ is $\log_2 r$ times smaller: arity 6 is
+  $\approx\log_2 6\approx 2.585\times$ shallower than arity 2.
+- **Size.** The bound above improves by the factor $2^{r}+rn$ in the denominator —
+  in the $n$-dominated regime a constant $\sim r/2$ fewer nodes for arity 6, at the
+  price of $2^{6}=64$ learnable truth-table bits per node vs. $2^{2}=4$ (a larger
+  per-node soft→hard gap; see the arity warning in the [guide](guide.md)).
+- **Degree reach per layer.** One layer reaches degree $r$: arity 6 clears 3-bit
+  *and* up-to-6-bit parities that no arity-2 layer can, but still misses 7-bit
+  parity — universality still needs depth.
 
 ## Scope and caveats
 
-- **Representation, not learning.** The theorem is about what `forward_hard` *can*
-  compute. It says nothing about whether gradient descent on the soft relaxation
-  *finds* such a circuit, nor about generalization.
-- **Exact, because the domain is finite.** On $\{0,1\}^n$ there is nothing to
-  approximate — a universal architecture represents every classifier exactly.
-  (The "approximation" framing returns only if inputs are treated as a
-  sub-sampled/continuous set, e.g. more thermometer bits approximating a
-  real-valued feature.)
-- **`GroupSum` is enough.** No learned decoder is needed for universality; the
-  parameter-free popcount head already routes indicator bits to a correct argmax.
-  The learned heads ({class}`~silogic.heads.LearnedDecoder`) can only match this
-  class, not exceed it (their inputs are the same Boolean features).
-- **`linear` / low-degree `polynomial` nodes are not universal** on their own —
-  they realize only threshold / bounded-degree functions and cannot represent
-  XOR. Universality needs a full-LUT (`multilinear`/`hybrid`/`walsh`) or the
+- **Representation, not learning.** These are statements about what
+  `forward_hard` *can* compute, not about SGD finding it or about generalization.
+- **Exact, because the domain is finite.** On $\{0,1\}^n$ a universal architecture
+  represents every classifier exactly; "approximation" returns only if the inputs
+  are a sub-sampled/continuous set (e.g. more thermometer bits approximating a
+  real-valued feature).
+- **Learned vs. random trees.** The degree-$r^{D}$-PTF ceiling is the same either
+  way, but *learning* the trees (feature learning) drastically lowers the width
+  needed for structured targets versus fixed/random candidate wiring (a
+  random-feature kernel). This is why `connectome="topk"`/`"dense"` (learnable
+  wiring) beat `"fixed"` at equal width.
+- **`linear` / low-degree `polynomial` nodes are weaker.** They realize only
+  threshold / bounded-degree functions per node and cannot represent XOR even at
+  arity $r$; universality needs a full-LUT (`multilinear`/`hybrid`/`walsh`) or the
   16-gate (`gate16`) node.
